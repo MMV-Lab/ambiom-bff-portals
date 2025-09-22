@@ -18,20 +18,19 @@ except jpype.JException as e:
 
 from bioio import BioImage
 import bioio_bioformats
-from bioio.writers.ome_tiff_writer import OmeTiffWriter
-from bioio.writers.ome_zarr_writer import OmeZarrWriter
-
+from bioio.writers import OmeTiffWriter
+#TODO: OME ZARR
 
 # nohup python3 Final.py > output.log 2>&1 &
 
 # ----------- Configuration -----------
-input_path = Path("AG29").expanduser().resolve()
-output_path = Path("./output/AG-29_Anika/NEW").resolve()
+input_path = Path("/mnt/data/isas.de/davide.panzeri/ambiomgroupdrive/BioImaging-RO/Malte/Experiments/SampleRotor/Analysis vascular network/Knees AG Engels_Mosaic/knee_AGEngels_stichedmosaics/knee_agengels1_4_2-5_z4_stiched/").expanduser().resolve()
+output_path = Path("../LSFM-sample-rotor-vasculature/data/RAW/stitched_mosaic/knee_agengels1_4_2-5_z4_stiched").resolve()
 tmp_path = Path("./tmp").resolve()
 
 # Set to a glob pattern (e.g. "250319_Knee2_*") or None to process all
-name_to_match = "221031_AG-029_A1_zoom12-1_z5_16-53-36"
-# name_to_match = None
+# name_to_match = "221031_AG-029_A1_zoom12-1_z5_16-53-36"
+name_to_match = None
 
 # Set to True if you want to perform conversion
 convert = True
@@ -123,7 +122,7 @@ for sub_dir in tqdm(sub_dirs, desc="🔍 Processing samples", unit="sample"):
 			tqdm.write(
 				f"🧠 Reading: {path_to_read.name} (from {path_to_read.parent})")
 			try:
-				img = BioImage(path_to_read, reader=bioio_bioformats.Reader)
+				img = BioImage(path_to_read)
 
 			except Exception as e:
 				tqdm.write(f"❌ Failed to read image {path_to_read.name}: {e}")
@@ -174,20 +173,20 @@ for sub_dir in tqdm(sub_dirs, desc="🔍 Processing samples", unit="sample"):
 			
 				tqdm.write(f"✅ Successfully saved OME TIFF to: {out_file.name}")
 
-				out_file = output_path / f"{sample_name}.ome.zarr"
-				# Save to OME ZARR
-				zarr_writer = OmeZarrWriter(out_file)
-				zarr_writer.write_image(
-					image_data=img.get_image_dask_data("CZYX"),
-					image_name=out_file.name,
-					physical_pixel_sizes=img.physical_pixel_sizes,
-					channel_names=img.channel_names,
-					channel_colors=None,
-					scale_num_levels=4,
-					scale_factor=2
-				)
+				# out_file = output_path / f"{sample_name}.ome.zarr"
+				# # Save to OME ZARR
+				# zarr_writer = OmeZarrWriter(out_file)
+				# zarr_writer.write_image(
+				# 	image_data=img.get_image_dask_data("CZYX"),
+				# 	image_name=out_file.name,
+				# 	physical_pixel_sizes=img.physical_pixel_sizes,
+				# 	channel_names=img.channel_names,
+				# 	channel_colors=None,
+				# 	scale_num_levels=4,
+				# 	scale_factor=2
+				# )
 
-				tqdm.write(f"✅ Successfully saved OME ZARR to: {out_file.name}")
+				# tqdm.write(f"✅ Successfully saved OME ZARR to: {out_file.name}")
 			
 			except Exception as e:
 				tqdm.write(f"❌ Failed to save image {out_file.name}: {e}")
