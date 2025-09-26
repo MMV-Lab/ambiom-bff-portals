@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.16.1"
+__generated_with = "0.16.2"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -28,11 +28,14 @@ with app.setup:
     from bioio_ome_tiff.writers import OmeTiffWriter
     from bioio_ome_zarr.writers import OMEZarrWriter
     import pandas as pd
+    import numpy as np
 
     import xml.etree.ElementTree as ET
     import re
     from functools import wraps
     from typing import Callable, Union, Any
+
+    import plotly.express as px
 
 
 @app.cell
@@ -134,17 +137,17 @@ def _(PATH_MAPPING, convert_windows_to_linux_path, input_form, mo):
             if converted_path:
                 input_form_output = mo.md(f"""Correctly Processed Input Path
 
-                    Original Windows Path: 
-
-                    `{input_form.value["input_path"]}`
-
-                    Converted Path: 
-
-                    `{converted_path}`
-
                     **PROCEED TO NEXT STEP**
 
                 """).callout("success")
+
+                    #             Original Windows Path: 
+
+                    # `{input_form.value["input_path"]}`
+
+                    # Converted Path: 
+
+                    # `{converted_path}`
 
             else:
                 input_form_output = mo.vstack(
@@ -204,31 +207,13 @@ def _(converted_path, mo):
 
 
 @app.cell
-def _(PATH_MAPPING, folder_submit, mo):
-    mo.stop(folder_submit.value == False)
-    input_form_output = mo.vstack(
-        [
-            mo.md("""The Windows path provided does not match any specified mapping.
-
-    Here's the list of already implemented mappings:
-
-
-    """),
-            list(PATH_MAPPING.keys()),
-        ]
-    ).callout("danger")
-
-    input_form_output
-    return
-
-
-@app.cell
 def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
     mo.stop(folder_submit.value == False)
     metadata_collection_done = False
 
 
     complete_list_metadata = []
+    bioimage_list = []
 
     with mo.status.progress_bar(total=len(folder_explorer.value), title="Gathering Metadata...", completion_title="🎉Done", completion_subtitle="All Set!") as bar:
         for folder_explorer_element in folder_explorer.value:
@@ -238,10 +223,23 @@ def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
                 bar.update(subtitle=f"{input_dir.name}")
                 continue
             first_file = sorted(input_dir.glob("*.ome.tif"))[0]
-            #input_image = BioImage(first_file, use_plugin_cache=True)
+            input_image = BioImage(first_file, use_plugin_cache=True)
 
+            # Downsampling
+            thumbnail = input_image.get_xarray_dask_stack().isel(Z=input_image.dims.Z // 2).squeeze(drop=True).coarsen(X=4, Y=4).median()
+
+            # Contrast enhancement
+            vmin, vmax = thumbnail.quantile([0.01, 0.999],dim=["X","Y"], skipna=True)
+        
+            thumbnail = thumbnail.clip(min=vmin, max=vmax)
+
+            thumbnail = (thumbnail - vmin) / (vmax - vmin) * 255.0
+
+            thumbnail = thumbnail.astype(np.uint8)
+        
             metadata = blaze_extract_metadata(first_file)
 
+            bioimage_list.append(thumbnail)
             complete_list_metadata.append(metadata)
 
             #output_ome = blaze_single_image_ome(input_image, str(input_dir.name))
@@ -256,33 +254,45 @@ def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
 
     metadata_df['File Path'] = metadata_df['File Path'].map(convert_linux_to_windows_path)
 
-    mo.output.append(metadata_df.head())
-
-    return metadata_collection_done, metadata_df
+    return bioimage_list, metadata_collection_done, metadata_df, vmax
 
 
 @app.cell
-def _(metadata_collection_done, mo):
-    mo.stop(metadata_collection_done == False)
-
-
-
-    # if metadata_collection_done:
-
-    #     mo.vstack(
-    #         [
-    #             mo.md("""# 3) Fill In Manual Metadata
-
-
-    #     """)
-    #         ]
-    #     )
+def _(vmax):
+    vmax.values
     return
 
 
 @app.cell
-def _(metadata_collection_done, metadata_df, mo):
+def _(bioimage_list, metadata_collection_done, mo):
     mo.stop(metadata_collection_done == False)
+
+    _plotly_fig = px.imshow(bioimage_list[0], facet_col="C", binary_string=True, aspect='equal',contrast_rescaling="minmax", color_continuous_scale ="magma", height=300)
+
+
+    channels = mo.ui.array(
+        [
+            mo.ui.text(
+                label="Channel " + str(i)) for i in range(bioimage_list[0].coords["C"].size)
+        ]
+    )
+
+    manual_metadata_submit = mo.ui.run_button(kind="warn", label="**Submit**")
+
+    mo.vstack(
+        [
+            mo.md("""# 3) Fill In Manual Metadata  """), 
+            mo.ui.plotly(_plotly_fig),
+            mo.vstack(channels),
+            manual_metadata_submit
+        ]
+    )
+    return (manual_metadata_submit,)
+
+
+@app.cell
+def _(manual_metadata_submit, metadata_df, mo):
+    mo.stop(manual_metadata_submit.value == False)
 
     metadata_csv_string = metadata_df.to_csv(None, index=False)
 
@@ -293,24 +303,41 @@ def _(metadata_collection_done, metadata_df, mo):
         label="Download CSV",
     )
 
+    #         mo.md("""
+
+    #         You can now download the final CSV file containing all the metadata. 
+
+    #         The requested output files will also be placed in the `output` directory.
+
+    #         🎉 You can now open the [BioFileFinder app](https://bff.allencell.org/app) and upload your CSV file!
+
+    #         <p style="text-align: center;"> {download_button} </p>
+
+
+    # """).batch(download_button=csv_download).center().callout("success"),
+
+
+    final_submit = mo.ui.run_button(kind="warn", label="**Submit**")
+
     mo.vstack(
         [
             mo.md("""# 4) Final Download"""),
-
-            mo.md("""
-
-            You can now download the final CSV file containing all the metadata. 
-
-            The requested output files will also be placed in the `output` directory.
-
-            🎉 You can now open the [BioFileFinder app](https://bff.allencell.org/app) and upload your CSV file!
-
-            <p style="text-align: center;"> {download_button} </p>
-
-
-    """).batch(download_button=csv_download).center().callout("success"),
+            mo.md("Preview your final metadata here:"),
+            metadata_df.drop(columns="File Path"),
+            final_submit
         ],
     )
+    return (final_submit,)
+
+
+@app.cell
+def _(final_submit, mo):
+    mo.stop(final_submit.value == False)
+
+    mo.md("""
+            🎉 Congratulations! Your files have been correctly stored 🥰
+
+    """).center().callout("success")
     return
 
 
@@ -612,7 +639,6 @@ def _():
 @app.cell
 def _():
     # ome.structured_annotations[0].to_xml()
-
     return
 
 
