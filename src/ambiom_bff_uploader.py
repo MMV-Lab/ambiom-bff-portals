@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.16.2"
+__generated_with = "0.17.0"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -29,6 +29,7 @@ with app.setup:
     from bioio_ome_zarr.writers import OMEZarrWriter
     import pandas as pd
     import numpy as np
+    import polars as pl
 
     import xml.etree.ElementTree as ET
     import re
@@ -37,10 +38,17 @@ with app.setup:
 
     import plotly.express as px
 
-
-@app.cell
-def _():
     import marimo as mo
+    import uuid
+    from datetime import datetime
+    import random
+    import string
+
+    # ================ CUSTOM CONSTANTS ================
+
+
+    TMP_PATH = Path("./tmp").resolve()
+    TMP_PATH.mkdir(parents=True, exist_ok=True)
 
     PATH_MAPPING = {
         PureWindowsPath(r"\\ambiom-fs1.isas.de\ambiom_storage"): Path(
@@ -50,14 +58,40 @@ def _():
         # PureWindowsPath(r"L:\Research"): None, # AMBIOM GROUP\BioImaging-RO
     }
 
-
-    tmp_path = Path("./tmp").resolve()
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    return PATH_MAPPING, mo
+    DYE_DB = pl.read_parquet("public/dyes.parquet")
+    MARKER_DB = pl.read_parquet("public/markers.parquet")
+    OUTPUT_DIR_CSV = Path("./db").resolve()
+    OUTPUT_DIR_CSV.mkdir(parents=True, exist_ok=True)
 
 
 @app.cell
-def _(mo):
+def _():
+    # metadata_stack = mo.hstack(
+    #     [
+    #         mo.ui.dropdown(
+    #             options=DYE_DB["Dye"],
+    #             value="Brilliant Violet 480",
+    #             searchable=True,
+    #             allow_select_none=False,
+    #             label="Dye:",
+    #         ),
+    #         mo.ui.dropdown(
+    #             options=MARKER_DB["marker"],
+    #             value="CD31",
+    #             searchable=True,
+    #             allow_select_none=False,
+    #             label="Marker:",
+    #         ),
+    #     ],
+    #    justify="space-around" 
+    # )
+
+    # metadata_stack
+    return
+
+
+@app.cell
+def _():
     title = mo.hstack(
         [
             mo.image(src="public/ISAS_Logo.svg", width=70),
@@ -68,20 +102,16 @@ def _(mo):
     )
 
     body_text = mo.md(""" 
-     This WebApplication is created by the [AMBIOM Team](https://mmv-lab.github.io/) at [*ISAS – Leibniz-Institut für Analytische Wissenschaften*](https://www.isas.de/en) in Dortmund (Germany). 
+     This Web Portal is created by the [AMBIOM Team](https://mmv-lab.github.io/) at [*ISAS – Leibniz-Institut für Analytische Wissenschaften*](https://www.isas.de/en) in Dortmund (Germany). 
 
-
-
-
-
-    """)
+    """).center()
 
     mo.vstack([title, body_text])
     return
 
 
 @app.cell
-def _(mo):
+def _():
     input_form = (
         mo.md("""
 
@@ -123,7 +153,7 @@ def _(mo):
 
 
 @app.cell
-def _(PATH_MAPPING, convert_windows_to_linux_path, input_form, mo):
+def _(input_form):
     input_form_output = mo.md("")
     converted_path = None
 
@@ -167,7 +197,7 @@ def _(PATH_MAPPING, convert_windows_to_linux_path, input_form, mo):
 
 
 @app.cell
-def _(converted_path, mo):
+def _(converted_path):
     mo.stop(converted_path == None)
 
 
@@ -207,10 +237,9 @@ def _(converted_path, mo):
 
 
 @app.cell
-def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
+def _(folder_explorer, folder_submit):
     mo.stop(folder_submit.value == False)
     metadata_collection_done = False
-
 
     complete_list_metadata = []
     bioimage_list = []
@@ -222,28 +251,29 @@ def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
                 mo.output.append(mo.md(f"`{input_dir.name}` has subdirectories!"))
                 bar.update(subtitle=f"{input_dir.name}")
                 continue
+
+            if sorted(input_dir.glob("*.ome.tif")) == []:
+                mo.output.append(mo.md(f"`{input_dir.name}` no file found!"))
+                bar.update(subtitle=f"{input_dir.name}")
+                continue
+            
             first_file = sorted(input_dir.glob("*.ome.tif"))[0]
             input_image = BioImage(first_file, use_plugin_cache=True)
 
             # Downsampling
             thumbnail = input_image.get_xarray_dask_stack().isel(Z=input_image.dims.Z // 2).squeeze(drop=True).coarsen(X=4, Y=4).median()
-
             # Contrast enhancement
             vmin, vmax = thumbnail.quantile([0.01, 0.999],dim=["X","Y"], skipna=True)
-        
             thumbnail = thumbnail.clip(min=vmin, max=vmax)
-
             thumbnail = (thumbnail - vmin) / (vmax - vmin) * 255.0
-
             thumbnail = thumbnail.astype(np.uint8)
-        
+
             metadata = blaze_extract_metadata(first_file)
 
             bioimage_list.append(thumbnail)
             complete_list_metadata.append(metadata)
 
             #output_ome = blaze_single_image_ome(input_image, str(input_dir.name))
-
 
             # mo.output.append(input_image.ome_metadata.model_copy())
             bar.update(subtitle=f"{input_dir.stem}")
@@ -253,55 +283,131 @@ def _(convert_linux_to_windows_path, folder_explorer, folder_submit, mo):
     metadata_df = pd.DataFrame.from_dict(complete_list_metadata)
 
     metadata_df['File Path'] = metadata_df['File Path'].map(convert_linux_to_windows_path)
-
-    return bioimage_list, metadata_collection_done, metadata_df, vmax
-
-
-@app.cell
-def _(vmax):
-    vmax.values
-    return
+    return bioimage_list, metadata_collection_done, metadata_df
 
 
 @app.cell
-def _(bioimage_list, metadata_collection_done, mo):
+def _(bioimage_list, metadata_collection_done):
     mo.stop(metadata_collection_done == False)
 
-    _plotly_fig = px.imshow(bioimage_list[0], facet_col="C", binary_string=True, aspect='equal',contrast_rescaling="minmax", color_continuous_scale ="magma", height=300)
+    _plotly_fig = px.imshow(bioimage_list[0], facet_col="C", binary_string=True, aspect='equal',contrast_rescaling="minmax", color_continuous_scale ="magma", height=400)
+
+    _C = bioimage_list[0].coords["C"].size
+
+    dye_marker_dict = mo.ui.dictionary(
+        {
+            "dye": mo.ui.array(
+                [mo.ui.dropdown(
+                options=DYE_DB["Dye"],
+                value="Brilliant Violet 480",
+                searchable=True,
+                allow_select_none=False,
+                label="Dye:",
+            ) for _ in range(_C)]
+            ),
+            "marker": mo.ui.array([mo.ui.dropdown(
+                options=MARKER_DB["marker"],
+                value=None,
+                searchable=True,
+                allow_select_none=True,
+                label="Marker:",
+            ) for _ in range(_C)])
+        }
+    )
 
 
     channels = mo.ui.array(
         [
-            mo.ui.text(
-                label="Channel " + str(i)) for i in range(bioimage_list[0].coords["C"].size)
+            mo.ui.text(label="Channel " + str(i)) for i in range(_C)
         ]
+    )
+
+
+
+    # metadata_array = mo.ui.array(
+    #     [
+    #         mo.ui.dropdown(
+    #             options=DYE_DB["Dye"],
+    #             value="Brilliant Violet 480",
+    #             searchable=True,
+    #             allow_select_none=False,
+    #             label="Dye:",
+    #         ),
+    #         mo.ui.dropdown(
+    #             options=MARKER_DB["marker"],
+    #             value="CD31",
+    #             searchable=True,
+    #             allow_select_none=False,
+    #             label="Marker:",
+    #         ),
+    #     ],
+    # )
+
+    manual_metadata_dict = mo.ui.dictionary(
+     {
+         "Host": mo.ui.dropdown(options=["Human", "Mouse"], label="Host:"),
+         "Location": mo.ui.dropdown(options=["Liver", "Knee Joint", "Heart"], label="Location:"),
+         "Treatment": mo.ui.dropdown(options=["CTRL", "WT", "Disease"], label="Treatment:"),
+         "Timepoint (@ Treatment)": mo.ui.dropdown(options=["0 days", "2 days", "7 days"], label="Timepoint (@ Treatment):"),
+         "Additional Comments": mo.ui.text(label="Additional Comments:"),
+     }
     )
 
     manual_metadata_submit = mo.ui.run_button(kind="warn", label="**Submit**")
 
-    mo.vstack(
+    dye_marker_stack = mo.md(f"### Fill in the required metadata for each of the {_C} Channels:\n\n"+"\n\n".join(
+        # Iterate over the elements and embed them in markdown
+        [
+            f" **{i}.** {dye} {marker}"
+            for i, (dye, marker) in enumerate(zip(
+                dye_marker_dict["dye"], dye_marker_dict["marker"]
+            ))
+        ]
+    ) + "")
+
+    final = mo.vstack(
         [
             mo.md("""# 3) Fill In Manual Metadata  """), 
             mo.ui.plotly(_plotly_fig),
-            mo.vstack(channels),
+            dye_marker_stack,
+            mo.md("-------------"),
+            mo.md("### Please insert the Experiment Metadata:"),
+            manual_metadata_dict.vstack(),
             manual_metadata_submit
         ]
     )
-    return (manual_metadata_submit,)
+
+    final
+    return dye_marker_dict, manual_metadata_dict, manual_metadata_submit
 
 
 @app.cell
-def _(manual_metadata_submit, metadata_df, mo):
+def _(
+    dye_marker_dict,
+    manual_metadata_dict,
+    manual_metadata_submit,
+    metadata_df,
+):
     mo.stop(manual_metadata_submit.value == False)
 
-    metadata_csv_string = metadata_df.to_csv(None, index=False)
+    channel_dict = {
+        f"Channel {i}": f"{m} - {d}" if m else d
+        for i, (m, d) in enumerate(zip(dye_marker_dict.value["marker"], dye_marker_dict.value["dye"]))
+    }
 
-    csv_download = mo.download(
-        data=metadata_csv_string,
-        filename="data.csv",
-        mimetype="text/csv",
-        label="Download CSV",
-    )
+    final_df = metadata_df.assign(**manual_metadata_dict.value)
+    final_df = final_df.assign(**channel_dict)
+
+    final_df['uuid'] = [uuid.uuid4() for _ in range(len(final_df))]
+
+    # metadata_csv_string = final_df.to_csv(None, index=False)
+
+    # csv_download = mo.download(
+    #     data=metadata_csv_string,
+    #     filename="data.csv",
+    #     mimetype="text/csv",
+    #     label="Download CSV",
+    # )
 
     #         mo.md("""
 
@@ -321,18 +427,22 @@ def _(manual_metadata_submit, metadata_df, mo):
 
     mo.vstack(
         [
-            mo.md("""# 4) Final Download"""),
+            mo.md("""# 4) Submit to Metadata Storage"""),
             mo.md("Preview your final metadata here:"),
-            metadata_df.drop(columns="File Path"),
+            final_df.drop(columns="File Path"),
             final_submit
         ],
     )
-    return (final_submit,)
+    return final_df, final_submit
 
 
 @app.cell
-def _(final_submit, mo):
+def _(final_df, final_submit):
     mo.stop(final_submit.value == False)
+
+    csv_name: str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7)) + '-' + str('{:%Y%m%d_%H%M%S}'.format(datetime.now())) + ".csv"
+
+    final_df.to_csv(OUTPUT_DIR_CSV / csv_name, index=False)
 
     mo.md("""
             🎉 Congratulations! Your files have been correctly stored 🥰
@@ -375,80 +485,76 @@ def _():
     return
 
 
-@app.cell
-def _(PATH_MAPPING):
-    def convert_windows_to_linux_path(windows_path_str: str) -> Path | None:
-        """
-        Converts a Windows path string to a Linux path string based on the global PATH_MAPPING.
+@app.function
+def convert_windows_to_linux_path(windows_path_str: str) -> Path | None:
+    """
+    Converts a Windows path string to a Linux path string based on the global PATH_MAPPING.
 
-        Args:
-            windows_path_str: The input Windows path string.
+    Args:
+        windows_path_str: The input Windows path string.
 
-        Returns:
-            The converted Linux path string (with forward slashes) if a mapping is found,
-            otherwise None.
-        """
-        input_windows_path = PureWindowsPath(windows_path_str)
-        converted_path = None
+    Returns:
+        The converted Linux path string (with forward slashes) if a mapping is found,
+        otherwise None.
+    """
+    input_windows_path = PureWindowsPath(windows_path_str)
+    converted_path = None
 
-        # Iterate through the mappings in the global PATH_MAPPING dictionary
-        for win_root, linux_root in PATH_MAPPING.items():
-            # Check if the input path is a subpath of the current mapping's Windows root
-            if input_windows_path.is_relative_to(win_root):
-                # Get the portion of the path relative to the Windows root
-                relative_path = input_windows_path.relative_to(win_root)
+    # Iterate through the mappings in the global PATH_MAPPING dictionary
+    for win_root, linux_root in PATH_MAPPING.items():
+        # Check if the input path is a subpath of the current mapping's Windows root
+        if input_windows_path.is_relative_to(win_root):
+            # Get the portion of the path relative to the Windows root
+            relative_path = input_windows_path.relative_to(win_root)
 
-                if linux_root:
-                    # Join the Linux mount point with the relative path to get the final converted path
-                    converted_path = linux_root / relative_path
-                    break  # Exit the loop once a match is found
-
-        if converted_path:
-            return converted_path.absolute()
-        else:
-            return None
-    return (convert_windows_to_linux_path,)
-
-
-@app.cell
-def _(PATH_MAPPING):
-    def convert_linux_to_windows_path(linux_path: Union[str, Path]) -> str | None:
-        """
-        Converts a Linux path (string or Path object) to a Windows path string
-        based on the global PATH_MAPPING.
-
-        Args:
-            linux_path: The input Linux path (as a string or pathlib.Path object).
-
-        Returns:
-            The converted Windows path string (with backslashes) if a mapping is found,
-            otherwise None.
-        """
-        try:
-            # Ensure we are working with a pathlib.Path object
-            input_linux_path = Path(linux_path).resolve()
-        except (TypeError, RuntimeError):
-            return None # Handle potential invalid path inputs or resolution errors
-
-        converted_path = None
-
-        # Iterate through the mappings in the global PATH_MAPPING dictionary
-        for win_root, linux_root in PATH_MAPPING.items():
-            # Check if the input path is a subpath of the current mapping's Linux root
-            if input_linux_path.is_relative_to(linux_root):
-                # Get the portion of the path relative to the Linux root
-                relative_path = input_linux_path.relative_to(linux_root)
-
-                # Join the Windows root with the relative path to get the final converted path
-                converted_path = win_root / relative_path
+            if linux_root:
+                # Join the Linux mount point with the relative path to get the final converted path
+                converted_path = linux_root / relative_path
                 break  # Exit the loop once a match is found
 
-        if converted_path:
-            # Convert the PureWindowsPath object to a string for the final output
-            return str(converted_path)
-        else:
-            return None
-    return (convert_linux_to_windows_path,)
+    if converted_path:
+        return converted_path.absolute()
+    else:
+        return None
+
+
+@app.function
+def convert_linux_to_windows_path(linux_path: Union[str, Path]) -> str | None:
+    """
+    Converts a Linux path (string or Path object) to a Windows path string
+    based on the global PATH_MAPPING.
+
+    Args:
+        linux_path: The input Linux path (as a string or pathlib.Path object).
+
+    Returns:
+        The converted Windows path string (with backslashes) if a mapping is found,
+        otherwise None.
+    """
+    try:
+        # Ensure we are working with a pathlib.Path object
+        input_linux_path = Path(linux_path).resolve()
+    except (TypeError, RuntimeError):
+        return None # Handle potential invalid path inputs or resolution errors
+
+    converted_path = None
+
+    # Iterate through the mappings in the global PATH_MAPPING dictionary
+    for win_root, linux_root in PATH_MAPPING.items():
+        # Check if the input path is a subpath of the current mapping's Linux root
+        if input_linux_path.is_relative_to(linux_root):
+            # Get the portion of the path relative to the Linux root
+            relative_path = input_linux_path.relative_to(linux_root)
+
+            # Join the Windows root with the relative path to get the final converted path
+            converted_path = win_root / relative_path
+            break  # Exit the loop once a match is found
+
+    if converted_path:
+        # Convert the PureWindowsPath object to a string for the final output
+        return str(converted_path)
+    else:
+        return None
 
 
 @app.function
@@ -493,12 +599,16 @@ def blaze_extract_metadata(image_path: Path) -> dict:
         if isinstance(metadata_dict[key], str):
             metadata_dict[key] = find_metadata_in_xml(image, metadata_dict[key])
 
-    # FIX FILTERS
-
-    # for i in range(len(image.channel_names)):
-    #     tmp_filter_dict = find_metadata_in_xml(image, f'Filter{i}')
-    #     metadata_dict[f'Channel{i}_EXC [nm]'] = tmp_filter_dict['ExcitationWL']
-    #     metadata_dict[f'Channel{i}_EM [nm]'] = tmp_filter_dict['EmissionWL']
+    for i in range(len(image.channel_names)):
+        tmp_filter_dict = find_metadata_in_xml(image, f'Filter{i}')
+        if isinstance(tmp_filter_dict, dict) and "EmissionWL" in tmp_filter_dict:
+            metadata_dict[f'Channel {i} EXC [nm]'] = tmp_filter_dict['ExcitationWL']
+            metadata_dict[f'Channel {i} EM [nm]'] = tmp_filter_dict['EmissionWL']
+            metadata_dict[f'Channel {i} Exposure Time [ms]'] = tmp_filter_dict['ExposureTime']
+        else:
+            metadata_dict[f'Channel {i} EXC [nm]'] = None
+            metadata_dict[f'Channel {i} EM [nm]'] = None
+            metadata_dict[f'Channel {i} Exposure Time [ms]'] = None
 
     metadata_dict = {
         'File Name': image_path.name,
@@ -586,11 +696,6 @@ def find_metadata_in_xml(image: Any, text_to_search: str) -> Union[str, dict, No
 
 @app.cell
 def _():
-    return
-
-
-@app.cell
-def _():
     # _input_dir = folder_explorer.value[0].path
     # _first_file = sorted(_input_dir.glob("*.ome.tif"))[0]
 
@@ -639,6 +744,50 @@ def _():
 @app.cell
 def _():
     # ome.structured_annotations[0].to_xml()
+    return
+
+
+@app.cell
+def _():
+    # import neuroglancer
+
+
+    # viewer = neuroglancer.Viewer()
+
+    # with viewer.txn() as state:
+    #     # x_path = "/mnt/eternus/users/Davide/mmv-bff/data/AG29/221031_AG-029_A1_zoom4-1_z5_16-21-00/16-21-00_AG-029_A1_zoom4-1_z5_Blaze_C00_xyz-Table Z0000.ome.tif"
+
+    #     # x = BioImage(x_path, use_plugin_cache=True)
+
+    #     # tmp = x.get_xarray_dask_stack()
+
+    #     state.layers["dask"] = neuroglancer.ImageLayer(source=neuroglancer.LocalVolume(x_dask))
+
+    # print(viewer)
+    return
+
+
+@app.cell
+def _():
+    # _x_path = "/mnt/eternus/users/Davide/mmv-bff/data/AG29/221031_AG-029_A1_zoom4-1_z5_16-21-00/16-21-00_AG-029_A1_zoom4-1_z5_Blaze_C00_xyz-Table Z0000.ome.tif"
+
+    # x_bioio = BioImage(_x_path, use_plugin_cache=True)
+
+    # test = x_bioio.dask_data
+
+    # test_shape = test.shape
+
+    # factors = [1, 4, 8, 16]
+
+    # level_shapes = [
+    #     test_shape[:2] + tuple(max(x // f, 1) for x in test_shape[2:])
+    #     for f in factors
+    # ]
+
+    # print(level_shapes)
+
+    # writer = OMEZarrWriter(store="temp.ome.zarr", level_shapes=level_shapes, dtype=test.dtype)
+    # writer.write_full_volume(test)
     return
 
 
