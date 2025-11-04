@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.17.0"
+__generated_with = "0.17.6"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -30,6 +30,7 @@ with app.setup:
     import pandas as pd
     import numpy as np
     import polars as pl
+    import xarray as xr
 
     import xml.etree.ElementTree as ET
     import re
@@ -47,7 +48,7 @@ with app.setup:
     # ================ CUSTOM CONSTANTS ================
 
 
-    TMP_PATH = Path("./tmp").resolve()
+    TMP_PATH = Path("tmp").resolve()
     TMP_PATH.mkdir(parents=True, exist_ok=True)
 
     PATH_MAPPING = {
@@ -60,8 +61,27 @@ with app.setup:
 
     DYE_DB = pl.read_parquet("public/dyes.parquet")
     MARKER_DB = pl.read_parquet("public/markers.parquet")
-    OUTPUT_DIR_CSV = Path("./db").resolve()
-    OUTPUT_DIR_CSV.mkdir(parents=True, exist_ok=True)
+
+
+    OUTPUT_DIR = Path("db").resolve()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    CSV_DIR = OUTPUT_DIR / "CSV"
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
+
+    THUMBNAIL_DIR = OUTPUT_DIR / "THUMBNAIL"
+    THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
+
+    ZARR_DIR = OUTPUT_DIR / "OME-ZARR"
+    ZARR_DIR.mkdir(parents=True, exist_ok=True)
+
+    TIFF_DIR = OUTPUT_DIR / "OME-TIFF"
+    TIFF_DIR.mkdir(parents=True, exist_ok=True)
+
+    XML_DIR = OUTPUT_DIR / "XML"
+    XML_DIR.mkdir(parents=True, exist_ok=True)
+
+    MAX_THUMBNAIL_SIZE = 512
 
 
 @app.cell
@@ -83,7 +103,7 @@ def _():
     #             label="Marker:",
     #         ),
     #     ],
-    #    justify="space-around" 
+    #    justify="space-around"
     # )
 
     # metadata_stack
@@ -171,13 +191,13 @@ def _(input_form):
 
                 """).callout("success")
 
-                    #             Original Windows Path: 
+            #             Original Windows Path:
 
-                    # `{input_form.value["input_path"]}`
+            # `{input_form.value["input_path"]}`
 
-                    # Converted Path: 
+            # Converted Path:
 
-                    # `{converted_path}`
+            # `{converted_path}`
 
             else:
                 input_form_output = mo.vstack(
@@ -211,7 +231,9 @@ def _(converted_path):
     folder_submit = mo.ui.run_button(kind="warn", label="**Process**")
 
     ome_tiff_multichannel_switch = mo.ui.switch(label="OME-TIFF (Single File)")
-    ome_tiff_singlechannels_switch = mo.ui.switch(label="OME-TIFFs (Separate Channels)")
+    ome_tiff_singlechannels_switch = mo.ui.switch(
+        label="OME-TIFFs (Separate Channels)"
+    )
     ome_zarr_switch = mo.ui.switch(label="OME-ZARR")
 
 
@@ -223,7 +245,6 @@ def _(converted_path):
             # mo.vstack(
             #     [
             #         mo.md(""" Convert image acquisitions to:
-
             # (Leave both turned off for no conversion - only extract metadata)"""),
             #         ome_tiff_multichannel_switch,
             #         ome_tiff_singlechannels_switch,
@@ -244,7 +265,12 @@ def _(folder_explorer, folder_submit):
     complete_list_metadata = []
     bioimage_list = []
 
-    with mo.status.progress_bar(total=len(folder_explorer.value), title="Gathering Metadata...", completion_title="🎉Done", completion_subtitle="All Set!") as bar:
+    with mo.status.progress_bar(
+        total=len(folder_explorer.value),
+        title="Gathering Metadata...",
+        completion_title="🎉Done",
+        completion_subtitle="All Set!",
+    ) as bar:
         for folder_explorer_element in folder_explorer.value:
             input_dir = Path(folder_explorer_element.path)
             if any(item.is_dir() for item in input_dir.iterdir()):
@@ -256,24 +282,17 @@ def _(folder_explorer, folder_submit):
                 mo.output.append(mo.md(f"`{input_dir.name}` no file found!"))
                 bar.update(subtitle=f"{input_dir.name}")
                 continue
-            
+
             first_file = sorted(input_dir.glob("*.ome.tif"))[0]
             input_image = BioImage(first_file, use_plugin_cache=True)
 
-            # Downsampling
-            thumbnail = input_image.get_xarray_dask_stack().isel(Z=input_image.dims.Z // 2).squeeze(drop=True).coarsen(X=4, Y=4).median()
-            # Contrast enhancement
-            vmin, vmax = thumbnail.quantile([0.01, 0.999],dim=["X","Y"], skipna=True)
-            thumbnail = thumbnail.clip(min=vmin, max=vmax)
-            thumbnail = (thumbnail - vmin) / (vmax - vmin) * 255.0
-            thumbnail = thumbnail.astype(np.uint8)
-
+            thumbnail = generate_thumbnail(input_image)
             metadata = blaze_extract_metadata(first_file)
 
             bioimage_list.append(thumbnail)
             complete_list_metadata.append(metadata)
 
-            #output_ome = blaze_single_image_ome(input_image, str(input_dir.name))
+            # output_ome = blaze_single_image_ome(input_image, str(input_dir.name))
 
             # mo.output.append(input_image.ome_metadata.model_copy())
             bar.update(subtitle=f"{input_dir.stem}")
@@ -281,8 +300,10 @@ def _(folder_explorer, folder_submit):
     metadata_collection_done = True
 
     metadata_df = pd.DataFrame.from_dict(complete_list_metadata)
-
-    metadata_df['File Path'] = metadata_df['File Path'].map(convert_linux_to_windows_path)
+    metadata_df["Internal File Path"] = metadata_df["File Path"]
+    metadata_df["File Path"] = metadata_df["File Path"].map(
+        convert_linux_to_windows_path
+    )
     return bioimage_list, metadata_collection_done, metadata_df
 
 
@@ -290,38 +311,51 @@ def _(folder_explorer, folder_submit):
 def _(bioimage_list, metadata_collection_done):
     mo.stop(metadata_collection_done == False)
 
-    _plotly_fig = px.imshow(bioimage_list[0], facet_col="C", binary_string=True, aspect='equal',contrast_rescaling="minmax", color_continuous_scale ="magma", height=400)
+    _plotly_fig = px.imshow(
+        bioimage_list[0],
+        facet_col="C",
+        binary_string=True,
+        aspect="equal",
+        contrast_rescaling="minmax",
+        color_continuous_scale="magma",
+        height=400,
+    )
 
     _C = bioimage_list[0].coords["C"].size
 
     dye_marker_dict = mo.ui.dictionary(
         {
             "dye": mo.ui.array(
-                [mo.ui.dropdown(
-                options=DYE_DB["Dye"],
-                value="Brilliant Violet 480",
-                searchable=True,
-                allow_select_none=False,
-                label="Dye:",
-            ) for _ in range(_C)]
+                [
+                    mo.ui.dropdown(
+                        options=DYE_DB["Dye"],
+                        value="Brilliant Violet 480",
+                        searchable=True,
+                        allow_select_none=False,
+                        label="Dye:",
+                    )
+                    for _ in range(_C)
+                ]
             ),
-            "marker": mo.ui.array([mo.ui.dropdown(
-                options=MARKER_DB["marker"],
-                value=None,
-                searchable=True,
-                allow_select_none=True,
-                label="Marker:",
-            ) for _ in range(_C)])
+            "marker": mo.ui.array(
+                [
+                    mo.ui.dropdown(
+                        options=MARKER_DB["marker"],
+                        value=None,
+                        searchable=True,
+                        allow_select_none=True,
+                        label="Marker:",
+                    )
+                    for _ in range(_C)
+                ]
+            ),
         }
     )
 
 
     channels = mo.ui.array(
-        [
-            mo.ui.text(label="Channel " + str(i)) for i in range(_C)
-        ]
+        [mo.ui.text(label="Channel " + str(i)) for i in range(_C)]
     )
-
 
 
     # metadata_array = mo.ui.array(
@@ -343,37 +377,63 @@ def _(bioimage_list, metadata_collection_done):
     #     ],
     # )
 
+    # allow_select_none=True
     manual_metadata_dict = mo.ui.dictionary(
-     {
-         "Host": mo.ui.dropdown(options=["Human", "Mouse"], label="Host:"),
-         "Location": mo.ui.dropdown(options=["Liver", "Knee Joint", "Heart"], label="Location:"),
-         "Treatment": mo.ui.dropdown(options=["CTRL", "WT", "Disease"], label="Treatment:"),
-         "Timepoint (@ Treatment)": mo.ui.dropdown(options=["0 days", "2 days", "7 days"], label="Timepoint (@ Treatment):"),
-         "Additional Comments": mo.ui.text(label="Additional Comments:"),
-     }
+        {
+            "Host": mo.ui.dropdown(options=["Human", "Mouse"], label="Host:"),
+            "Cell Line": mo.ui.dropdown(
+                options=["hMSCs", "HUVEC", "E. Coli", "Biopsy"], label="Cell Line:"
+            ),
+            "Location": mo.ui.dropdown(
+                options=[
+                    "Liver",
+                    "Knee Joint",
+                    "Heart",
+                    "Lung",
+                    "Bladder",
+                    "Peritoneum",
+                    "Colon",
+                ],
+                label="Location:",
+            ),
+            "Treatment": mo.ui.dropdown(
+                options=["CTRL", "WT", "Disease"],
+                label="Treatment or Disease Model:",
+            ),
+            "Timepoint (@ Treatment)": mo.ui.dropdown(
+                options=["0 days", "2 days", "7 days"],
+                allow_select_none=True,
+                label="Timepoint (@ Treatment):",
+            ),
+            "Additional Comments": mo.ui.text(label="Additional Comments:"),
+        }
     )
 
     manual_metadata_submit = mo.ui.run_button(kind="warn", label="**Submit**")
 
-    dye_marker_stack = mo.md(f"### Fill in the required metadata for each of the {_C} Channels:\n\n"+"\n\n".join(
-        # Iterate over the elements and embed them in markdown
-        [
-            f" **{i}.** {dye} {marker}"
-            for i, (dye, marker) in enumerate(zip(
-                dye_marker_dict["dye"], dye_marker_dict["marker"]
-            ))
-        ]
-    ) + "")
+    dye_marker_stack = mo.md(
+        f"### Fill in the required metadata for each of the {_C} Channels:\n\n"
+        + "\n\n".join(
+            # Iterate over the elements and embed them in markdown
+            [
+                f" **{i}.** {dye} {marker}"
+                for i, (dye, marker) in enumerate(
+                    zip(dye_marker_dict["dye"], dye_marker_dict["marker"])
+                )
+            ]
+        )
+        + ""
+    )
 
     final = mo.vstack(
         [
-            mo.md("""# 3) Fill In Manual Metadata  """), 
+            mo.md("""# 3) Fill In Manual Metadata  """),
             mo.ui.plotly(_plotly_fig),
             dye_marker_stack,
             mo.md("-------------"),
             mo.md("### Please insert the Experiment Metadata:"),
             manual_metadata_dict.vstack(),
-            manual_metadata_submit
+            manual_metadata_submit,
         ]
     )
 
@@ -392,13 +452,15 @@ def _(
 
     channel_dict = {
         f"Channel {i}": f"{m} - {d}" if m else d
-        for i, (m, d) in enumerate(zip(dye_marker_dict.value["marker"], dye_marker_dict.value["dye"]))
+        for i, (m, d) in enumerate(
+            zip(dye_marker_dict.value["marker"], dye_marker_dict.value["dye"])
+        )
     }
 
     final_df = metadata_df.assign(**manual_metadata_dict.value)
     final_df = final_df.assign(**channel_dict)
 
-    final_df['uuid'] = [uuid.uuid4() for _ in range(len(final_df))]
+    final_df["uuid"] = [uuid.uuid4() for _ in range(len(final_df))]
 
     # metadata_csv_string = final_df.to_csv(None, index=False)
 
@@ -411,7 +473,7 @@ def _(
 
     #         mo.md("""
 
-    #         You can now download the final CSV file containing all the metadata. 
+    #         You can now download the final CSV file containing all the metadata.
 
     #         The requested output files will also be placed in the `output` directory.
 
@@ -430,7 +492,7 @@ def _(
             mo.md("""# 4) Submit to Metadata Storage"""),
             mo.md("Preview your final metadata here:"),
             final_df.drop(columns="File Path"),
-            final_submit
+            final_submit,
         ],
     )
     return final_df, final_submit
@@ -440,9 +502,14 @@ def _(
 def _(final_df, final_submit):
     mo.stop(final_submit.value == False)
 
-    csv_name: str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7)) + '-' + str('{:%Y%m%d_%H%M%S}'.format(datetime.now())) + ".csv"
+    csv_name: str = (
+        "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
+        + "-"
+        + str(datetime.now().isoformat())
+        + ".csv"
+    )
 
-    final_df.to_csv(OUTPUT_DIR_CSV / csv_name, index=False)
+    final_df.to_csv(CSV_DIR / csv_name, index=False)
 
     mo.md("""
             🎉 Congratulations! Your files have been correctly stored 🥰
@@ -535,7 +602,9 @@ def convert_linux_to_windows_path(linux_path: Union[str, Path]) -> str | None:
         # Ensure we are working with a pathlib.Path object
         input_linux_path = Path(linux_path).resolve()
     except (TypeError, RuntimeError):
-        return None # Handle potential invalid path inputs or resolution errors
+        return (
+            None  # Handle potential invalid path inputs or resolution errors
+        )
 
     converted_path = None
 
@@ -584,42 +653,50 @@ def blaze_single_image_ome(img: BioImage, output_file_name):
 
 @app.function
 def blaze_extract_metadata(image_path: Path) -> dict:
-
     image = BioImage(image_path, reader=bioio_bioformats.Reader)
 
-
     metadata_dict = {
-        'Obj Magnification': "Blaze ObjectiveMagnification",
-        'Obj NA': "ObjectiveNA",
-        'Digital Zoom': "Blaze CurrentZoom",
-        'Measurament TimeStamp': "MeasTime",    
-    }    
+        "Obj Magnification": "Blaze ObjectiveMagnification",
+        "Obj NA": "ObjectiveNA",
+        "Digital Zoom": "Blaze CurrentZoom",
+        "Measurament TimeStamp": "MeasTime",
+    }
 
     for key in metadata_dict.keys():
         if isinstance(metadata_dict[key], str):
-            metadata_dict[key] = find_metadata_in_xml(image, metadata_dict[key])
+            metadata_dict[key] = find_metadata_in_xml(
+                image, metadata_dict[key]
+            )
 
     for i in range(len(image.channel_names)):
-        tmp_filter_dict = find_metadata_in_xml(image, f'Filter{i}')
-        if isinstance(tmp_filter_dict, dict) and "EmissionWL" in tmp_filter_dict:
-            metadata_dict[f'Channel {i} EXC [nm]'] = tmp_filter_dict['ExcitationWL']
-            metadata_dict[f'Channel {i} EM [nm]'] = tmp_filter_dict['EmissionWL']
-            metadata_dict[f'Channel {i} Exposure Time [ms]'] = tmp_filter_dict['ExposureTime']
+        tmp_filter_dict = find_metadata_in_xml(image, f"Filter{i}")
+        if (
+            isinstance(tmp_filter_dict, dict)
+            and "EmissionWL" in tmp_filter_dict
+        ):
+            metadata_dict[f"Channel {i} EXC [nm]"] = tmp_filter_dict[
+                "ExcitationWL"
+            ]
+            metadata_dict[f"Channel {i} EM [nm]"] = tmp_filter_dict[
+                "EmissionWL"
+            ]
+            metadata_dict[f"Channel {i} Exposure Time [ms]"] = tmp_filter_dict[
+                "ExposureTime"
+            ]
         else:
-            metadata_dict[f'Channel {i} EXC [nm]'] = None
-            metadata_dict[f'Channel {i} EM [nm]'] = None
-            metadata_dict[f'Channel {i} Exposure Time [ms]'] = None
+            metadata_dict[f"Channel {i} EXC [nm]"] = None
+            metadata_dict[f"Channel {i} EM [nm]"] = None
+            metadata_dict[f"Channel {i} Exposure Time [ms]"] = None
 
     metadata_dict = {
-        'File Name': image_path.name,
-        'File Path': str(image_path.parent.resolve()),
-        'Image Size (X,Y,Z) [pixels]': f'{image.dims.X},{image.dims.Y},{image.dims.Z}',
-
-        'Pixel Size X': image.physical_pixel_sizes.X,
-        'Pixel Size Y': image.physical_pixel_sizes.Y,
-        'Pixel Size Z': image.physical_pixel_sizes.Z,
-
-        'Number of Channels': len(image.channel_names),
+        "File Name": image_path.name,
+        # 'File Name': image_path.parent.name,
+        "File Path": str(image_path.resolve()),
+        "Image Size (X,Y,Z) [pixels]": f"{image.dims.X},{image.dims.Y},{image.dims.Z}",
+        "Pixel Size X": image.physical_pixel_sizes.X,
+        "Pixel Size Y": image.physical_pixel_sizes.Y,
+        "Pixel Size Z": image.physical_pixel_sizes.Z,
+        "Number of Channels": len(image.channel_names),
         **metadata_dict,
     }
 
@@ -629,7 +706,7 @@ def blaze_extract_metadata(image_path: Path) -> dict:
 @app.function
 def clean_up_qname(input_str: str) -> str:
     """Remove XML namespace from qname."""
-    return re.sub(r'{[^}]*}*', '', input_str)
+    return re.sub(r"{[^}]*}*", "", input_str)
 
 
 @app.function
@@ -638,6 +715,7 @@ def handle_return_decorator(func: Callable) -> Callable:
     Decorator to handle return values from XML metadata search.
     Standardizes the output format for dictionary and string returns.
     """
+
     @wraps(func)
     def wrapper(*args, **kwargs) -> Union[dict, str, None]:
         result = func(*args, **kwargs)
@@ -649,12 +727,15 @@ def handle_return_decorator(func: Callable) -> Callable:
         if isinstance(result, str):
             return result
         return None
+
     return wrapper
 
 
 @app.function
 @handle_return_decorator
-def find_metadata_in_xml(image: Any, text_to_search: str) -> Union[str, dict, None]:
+def find_metadata_in_xml(
+    image: Any, text_to_search: str
+) -> Union[str, dict, None]:
     """
     Searches for the first occurrence of text_to_search in qnames or fnames.
 
@@ -666,7 +747,10 @@ def find_metadata_in_xml(image: Any, text_to_search: str) -> Union[str, dict, No
         Union[str, dict, None]: The value as a string or dict if found, otherwise None.
     """
     try:
-        xml_list = [xml_annotation for xml_annotation in image.ome_metadata.structured_annotations]
+        xml_list = [
+            xml_annotation
+            for xml_annotation in image.ome_metadata.structured_annotations
+        ]
 
         # Search in qnames (first annotation)
         if xml_list:
@@ -674,10 +758,14 @@ def find_metadata_in_xml(image: Any, text_to_search: str) -> Union[str, dict, No
                 # Handle elements with children
                 if getattr(elem, "children", None):
                     for child in elem.children:
-                        if text_to_search in clean_up_qname(getattr(child, "qname", "")):
+                        if text_to_search in clean_up_qname(
+                            getattr(child, "qname", "")
+                        ):
                             return child.attributes
                 # Handle elements without children
-                elif text_to_search in clean_up_qname(getattr(elem, "qname", "")):
+                elif text_to_search in clean_up_qname(
+                    getattr(elem, "qname", "")
+                ):
                     return elem.attributes
 
         # Search in fnames (second annotation)
@@ -685,8 +773,8 @@ def find_metadata_in_xml(image: Any, text_to_search: str) -> Union[str, dict, No
             for elem in xml_list[1].value.any_elements:
                 if getattr(elem, "children", None):
                     for child in elem.children:
-                        if text_to_search in child.attributes.get('fname', ''):
-                            return child.attributes.get('Value', '')
+                        if text_to_search in child.attributes.get("fname", ""):
+                            return child.attributes.get("Value", "")
 
     except Exception as e:
         print(f"Error during XML annotation search: {e}")
@@ -789,6 +877,38 @@ def _():
     # writer = OMEZarrWriter(store="temp.ome.zarr", level_shapes=level_shapes, dtype=test.dtype)
     # writer.write_full_volume(test)
     return
+
+
+@app.function
+def generate_thumbnail(input_image: BioImage):
+    # Downsampling
+    thumbnail = (
+        input_image.get_xarray_dask_stack()
+        .isel(Z=input_image.dims.Z // 2)
+        .squeeze(drop=True)
+    )
+
+    # Progressively coarsen by 2 until X dimension is less than 512
+    while thumbnail.sizes["X"] >= MAX_THUMBNAIL_SIZE:
+        thumbnail = thumbnail.coarsen(X=2, Y=2).median()
+
+    # Contrast enhancement
+    vmin, vmax = thumbnail.quantile([0.01, 0.999], dim=["X", "Y"], skipna=True)
+    thumbnail = thumbnail.clip(min=vmin, max=vmax)
+
+    # Prevent division by zero using xarray.where
+    denominator = vmax - vmin
+    thumbnail = xr.where(
+        denominator > 0,
+        (thumbnail - vmin) / denominator * 255.0,
+        128.0,  # default value when denominator is 0
+    )
+
+    thumbnail = thumbnail.fillna(0).astype(np.uint8)
+
+    thumbnail_np = thumbnail.transpose("C", "Y", "X").compute().values
+
+    return thumbnail_np
 
 
 if __name__ == "__main__":
