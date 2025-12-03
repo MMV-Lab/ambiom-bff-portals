@@ -15,3 +15,5 @@ metadata_db/
 img_db/
 old/
 db/
+
+__marimo__/

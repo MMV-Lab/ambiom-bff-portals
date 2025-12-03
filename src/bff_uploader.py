@@ -1,7 +1,7 @@
 import marimo
 
-__generated_with = "0.17.6"
-app = marimo.App(width="medium")
+__generated_with = "0.18.1"
+app = marimo.App(width="medium", app_title="ISAS BFF Uploader")
 
 with app.setup:
     # Initialization code that runs before all other cells
@@ -31,6 +31,7 @@ with app.setup:
     import numpy as np
     import polars as pl
     import xarray as xr
+    from PIL import Image
 
     import xml.etree.ElementTree as ET
     import re
@@ -81,33 +82,9 @@ with app.setup:
     XML_DIR = OUTPUT_DIR / "XML"
     XML_DIR.mkdir(parents=True, exist_ok=True)
 
-    MAX_THUMBNAIL_SIZE = 512
+    MAX_THUMBNAIL_SIZE = 1024
 
-
-@app.cell
-def _():
-    # metadata_stack = mo.hstack(
-    #     [
-    #         mo.ui.dropdown(
-    #             options=DYE_DB["Dye"],
-    #             value="Brilliant Violet 480",
-    #             searchable=True,
-    #             allow_select_none=False,
-    #             label="Dye:",
-    #         ),
-    #         mo.ui.dropdown(
-    #             options=MARKER_DB["marker"],
-    #             value="CD31",
-    #             searchable=True,
-    #             allow_select_none=False,
-    #             label="Marker:",
-    #         ),
-    #     ],
-    #    justify="space-around"
-    # )
-
-    # metadata_stack
-    return
+    TIME_STAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 
 
 @app.cell
@@ -122,11 +99,11 @@ def _():
     )
 
     body_text = mo.md(""" 
-     This Web Portal is created by the [AMBIOM Team](https://mmv-lab.github.io/) at [*ISAS – Leibniz-Institut für Analytische Wissenschaften*](https://www.isas.de/en) in Dortmund (Germany). 
+    This Web Portal is created by the [AMBIOM Team](https://mmv-lab.github.io/) at [*ISAS – Leibniz-Institut für Analytische Wissenschaften*](https://www.isas.de/en) in Dortmund (Germany). 
+    This project originated as a companion tool to support the use of the open-source project [BioFileFinder](https://bff.allencell.org), enabling seamless metadata extraction and standardization for microscopy image datasets.
+    """)
 
-    """).center()
-
-    mo.vstack([title, body_text])
+    mo.vstack([title, body_text], align="center")
     return
 
 
@@ -272,30 +249,40 @@ def _(folder_explorer, folder_submit):
         completion_subtitle="All Set!",
     ) as bar:
         for folder_explorer_element in folder_explorer.value:
-            input_dir = Path(folder_explorer_element.path)
-            if any(item.is_dir() for item in input_dir.iterdir()):
-                mo.output.append(mo.md(f"`{input_dir.name}` has subdirectories!"))
-                bar.update(subtitle=f"{input_dir.name}")
+            try:
+                input_dir = Path(folder_explorer_element.path)
+                if any(item.is_dir() for item in input_dir.iterdir()):
+                    mo.output.append(
+                        mo.md(f"`{input_dir.name}` has subdirectories!")
+                    )
+                    bar.update(subtitle=f"{input_dir.name}")
+                    continue
+
+                if sorted(input_dir.glob("*.ome.tif")) == []:
+                    mo.output.append(mo.md(f"`{input_dir.name}` no file found!"))
+                    bar.update(subtitle=f"{input_dir.name}")
+                    continue
+
+                first_file = sorted(input_dir.glob("*.ome.tif"))[0]
+                metadata = blaze_extract_metadata(first_file)
+
+                # print(metadata)
+                input_image = BioImage(first_file, use_plugin_cache=True)
+                thumbnail = generate_quick_preview(input_image)
+
+                bioimage_list.append(thumbnail.to_numpy().astype(np.uint8))
+                complete_list_metadata.append(metadata)
+
+                bar.update(subtitle=f"{input_dir.stem}")
+
+            except Exception as e:
+                mo.output.append(
+                    mo.md(
+                        f"❌ **Error processing `{input_dir.name}`**: {type(e).__name__}: {str(e)}"
+                    ).callout("danger")
+                )
+                bar.update(subtitle=f"Error: {input_dir.name}")
                 continue
-
-            if sorted(input_dir.glob("*.ome.tif")) == []:
-                mo.output.append(mo.md(f"`{input_dir.name}` no file found!"))
-                bar.update(subtitle=f"{input_dir.name}")
-                continue
-
-            first_file = sorted(input_dir.glob("*.ome.tif"))[0]
-            input_image = BioImage(first_file, use_plugin_cache=True)
-
-            thumbnail = generate_thumbnail(input_image)
-            metadata = blaze_extract_metadata(first_file)
-
-            bioimage_list.append(thumbnail)
-            complete_list_metadata.append(metadata)
-
-            # output_ome = blaze_single_image_ome(input_image, str(input_dir.name))
-
-            # mo.output.append(input_image.ome_metadata.model_copy())
-            bar.update(subtitle=f"{input_dir.stem}")
 
     metadata_collection_done = True
 
@@ -313,15 +300,18 @@ def _(bioimage_list, metadata_collection_done):
 
     _plotly_fig = px.imshow(
         bioimage_list[0],
-        facet_col="C",
+        facet_col=0,
         binary_string=True,
         aspect="equal",
         contrast_rescaling="minmax",
         color_continuous_scale="magma",
-        height=400,
     )
 
-    _C = bioimage_list[0].coords["C"].size
+    _plotly_fig.for_each_annotation(
+        lambda a: a.update(text="Channel " + a.text.split("=")[1])
+    )
+
+    _C = bioimage_list[0].shape[0]
 
     dye_marker_dict = mo.ui.dictionary(
         {
@@ -380,9 +370,19 @@ def _(bioimage_list, metadata_collection_done):
     # allow_select_none=True
     manual_metadata_dict = mo.ui.dictionary(
         {
-            "Host": mo.ui.dropdown(options=["Human", "Mouse"], label="Host:"),
+            "Host": mo.ui.dropdown(
+                options=["Human", "Mouse", "Custom"], label="Host:"
+            ),
             "Cell Line": mo.ui.dropdown(
-                options=["hMSCs", "HUVEC", "E. Coli", "Biopsy"], label="Cell Line:"
+                options=[
+                    "hMSCs",
+                    "HUVEC",
+                    "E. Coli",
+                    "Biopsy",
+                    "Whole Tissue",
+                    "Custom",
+                ],
+                label="Cell Line:",
             ),
             "Location": mo.ui.dropdown(
                 options=[
@@ -393,17 +393,25 @@ def _(bioimage_list, metadata_collection_done):
                     "Bladder",
                     "Peritoneum",
                     "Colon",
+                    "Custom",
                 ],
                 label="Location:",
             ),
             "Treatment": mo.ui.dropdown(
-                options=["CTRL", "WT", "Disease"],
+                options=["CTRL", "WT", "Disease", "Custom"],
                 label="Treatment or Disease Model:",
             ),
-            "Timepoint (@ Treatment)": mo.ui.dropdown(
-                options=["0 days", "2 days", "7 days"],
+            # "Timepoint (@ Treatment)": mo.ui.dropdown(
+            #     options=["0 days", "2 days", "7 days"],
+            #     allow_select_none=True,
+            #     label="Timepoint (@ Treatment):",
+            # ),
+            "Timepoint": mo.ui.number(
+                value=None, start=0, step=1, label="Timepoint (@ Treatment):"
+            ),
+            "Timepoint unit": mo.ui.dropdown(
+                options=["seconds", "minutes", "hours", "days", "weeks", "months"],
                 allow_select_none=True,
-                label="Timepoint (@ Treatment):",
             ),
             "Additional Comments": mo.ui.text(label="Additional Comments:"),
         }
@@ -432,9 +440,21 @@ def _(bioimage_list, metadata_collection_done):
             dye_marker_stack,
             mo.md("-------------"),
             mo.md("### Please insert the Experiment Metadata:"),
-            manual_metadata_dict.vstack(),
+            manual_metadata_dict["Host"],
+            manual_metadata_dict["Cell Line"],
+            manual_metadata_dict["Location"],
+            manual_metadata_dict["Treatment"],
+            mo.hstack(
+                [
+                    manual_metadata_dict["Timepoint"],
+                    manual_metadata_dict["Timepoint unit"],
+                ],
+                justify="start",
+            ),
+            manual_metadata_dict["Additional Comments"],
             manual_metadata_submit,
-        ]
+        ],
+        justify="start",
     )
 
     final
@@ -462,36 +482,13 @@ def _(
 
     final_df["uuid"] = [uuid.uuid4() for _ in range(len(final_df))]
 
-    # metadata_csv_string = final_df.to_csv(None, index=False)
-
-    # csv_download = mo.download(
-    #     data=metadata_csv_string,
-    #     filename="data.csv",
-    #     mimetype="text/csv",
-    #     label="Download CSV",
-    # )
-
-    #         mo.md("""
-
-    #         You can now download the final CSV file containing all the metadata.
-
-    #         The requested output files will also be placed in the `output` directory.
-
-    #         🎉 You can now open the [BioFileFinder app](https://bff.allencell.org/app) and upload your CSV file!
-
-    #         <p style="text-align: center;"> {download_button} </p>
-
-
-    # """).batch(download_button=csv_download).center().callout("success"),
-
-
     final_submit = mo.ui.run_button(kind="warn", label="**Submit**")
 
     mo.vstack(
         [
             mo.md("""# 4) Submit to Metadata Storage"""),
             mo.md("Preview your final metadata here:"),
-            final_df.drop(columns="File Path"),
+            final_df,
             final_submit,
         ],
     )
@@ -503,9 +500,9 @@ def _(final_df, final_submit):
     mo.stop(final_submit.value == False)
 
     csv_name: str = (
-        "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
+        datetime.now().strftime(TIME_STAMP_FORMAT)
         + "-"
-        + str(datetime.now().isoformat())
+        + "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
         + ".csv"
     )
 
@@ -515,40 +512,6 @@ def _(final_df, final_submit):
             🎉 Congratulations! Your files have been correctly stored 🥰
 
     """).center().callout("success")
-    return
-
-
-@app.cell
-def _():
-    # TEST PATH
-
-    # r"\\ambiom-fs1.isas.de\ambiom_storage\users\Davide\mmv-bff\data\AG29"
-
-    # r"L:\Research\Christiane"
-    return
-
-
-@app.cell
-def _():
-    # graphical_elements = mo.ui.dictionary(
-    #     {
-    #         "file_selection_form": mo.ui.file_browser(initial_path=tmp_path,restrict_navigation=True).form(loading=True),
-    #         #"file_selection_form_output": mo.md("").form(),
-    #     }
-    # )
-
-
-    # accordion_layout = mo.accordion(
-    #     {
-    #         "1) Where is your Raw data?": mo.vstack(
-    #             [input_form, input_form_output]
-    #         ),
-    #         "2) Select Folders to analyze": mo.ui.file_browser(initial_path=tmp_path,restrict_navigation=True).form(loading=True),
-    #         "3) Set Microscope Settings": mo.md("Nothing!"),
-    #         "4) Export Data to Disk & BFF": mo.md("Nothing!"),
-    #     },
-    #     multiple=True
-    # )
     return
 
 
@@ -829,86 +792,76 @@ def _():
     return
 
 
-@app.cell
-def _():
-    # ome.structured_annotations[0].to_xml()
-    return
-
-
-@app.cell
-def _():
-    # import neuroglancer
-
-
-    # viewer = neuroglancer.Viewer()
-
-    # with viewer.txn() as state:
-    #     # x_path = "/mnt/eternus/users/Davide/mmv-bff/data/AG29/221031_AG-029_A1_zoom4-1_z5_16-21-00/16-21-00_AG-029_A1_zoom4-1_z5_Blaze_C00_xyz-Table Z0000.ome.tif"
-
-    #     # x = BioImage(x_path, use_plugin_cache=True)
-
-    #     # tmp = x.get_xarray_dask_stack()
-
-    #     state.layers["dask"] = neuroglancer.ImageLayer(source=neuroglancer.LocalVolume(x_dask))
-
-    # print(viewer)
-    return
-
-
-@app.cell
-def _():
-    # _x_path = "/mnt/eternus/users/Davide/mmv-bff/data/AG29/221031_AG-029_A1_zoom4-1_z5_16-21-00/16-21-00_AG-029_A1_zoom4-1_z5_Blaze_C00_xyz-Table Z0000.ome.tif"
-
-    # x_bioio = BioImage(_x_path, use_plugin_cache=True)
-
-    # test = x_bioio.dask_data
-
-    # test_shape = test.shape
-
-    # factors = [1, 4, 8, 16]
-
-    # level_shapes = [
-    #     test_shape[:2] + tuple(max(x // f, 1) for x in test_shape[2:])
-    #     for f in factors
-    # ]
-
-    # print(level_shapes)
-
-    # writer = OMEZarrWriter(store="temp.ome.zarr", level_shapes=level_shapes, dtype=test.dtype)
-    # writer.write_full_volume(test)
-    return
-
-
 @app.function
-def generate_thumbnail(input_image: BioImage):
-    # Downsampling
-    thumbnail = (
-        input_image.get_xarray_dask_stack()
-        .isel(Z=input_image.dims.Z // 2)
-        .squeeze(drop=True)
-    )
+def generate_quick_preview(input_image: BioImage):
+    preview = input_image.xarray_dask_data
+    preview = preview.squeeze(drop=True)
 
-    # Progressively coarsen by 2 until X dimension is less than 512
-    while thumbnail.sizes["X"] >= MAX_THUMBNAIL_SIZE:
-        thumbnail = thumbnail.coarsen(X=2, Y=2).median()
+    selection = {}
 
-    # Contrast enhancement
-    vmin, vmax = thumbnail.quantile([0.01, 0.999], dim=["X", "Y"], skipna=True)
-    thumbnail = thumbnail.clip(min=vmin, max=vmax)
+    # Handle dimensions that should keep middle slice
+    for dim in ["T", "M", "S", "Z"]:
+        if dim in preview.dims:
+            middle_idx = preview.sizes[dim] // 2
+            selection[dim] = middle_idx
+
+    # Downsample X and Y to fit within MAX_preview_SIZE
+    step = 1
+    if "X" in preview.dims and "Y" in preview.dims:
+        max_dim = max(preview.sizes["X"], preview.sizes["Y"])
+        while max_dim // step > MAX_THUMBNAIL_SIZE:
+            step *= 2
+        if step > 1:
+            selection["X"] = slice(None, None, step)
+            selection["Y"] = slice(None, None, step)
+
+    # Apply all selections at once
+    preview = preview.isel(selection) if selection else preview
+
+    # Contrast enhancement per channel
+    vmin, vmax = preview.quantile([0.01, 0.999], dim=["X", "Y"], skipna=True)
+    preview = preview.clip(min=vmin, max=vmax)
 
     # Prevent division by zero using xarray.where
     denominator = vmax - vmin
-    thumbnail = xr.where(
+    preview = xr.where(
         denominator > 0,
-        (thumbnail - vmin) / denominator * 255.0,
+        (preview - vmin) / denominator * 255.0,
         128.0,  # default value when denominator is 0
     )
+    preview = preview.fillna(0)
 
-    thumbnail = thumbnail.fillna(0).astype(np.uint8)
+    return preview
 
-    thumbnail_np = thumbnail.transpose("C", "Y", "X").compute().values
 
-    return thumbnail_np
+@app.function
+def generate_rgb_thumbnail(thumbnail: xr.DataArray):
+    selection = {}
+
+    n_channels = thumbnail.sizes["C"]
+
+    if "C" in thumbnail.dims:
+        if n_channels > 3:
+            selection["C"] = slice(0, 3)
+
+    thumbnail = thumbnail.isel(selection)
+
+    if "C" in thumbnail.dims and thumbnail.sizes["C"] == 2:
+        zero_channel = xr.zeros_like(thumbnail.isel(C=0))
+        thumbnail = xr.concat(
+            [thumbnail, zero_channel.expand_dims("C")], dim="C"
+        )
+
+    thumbnail = thumbnail.transpose("X", "Y", "C")
+    thumbnail = thumbnail.to_numpy().astype(np.uint8)
+    thumbnail = np.squeeze(thumbnail)
+
+    if n_channels == 1:
+        pil_thumbnail = Image.fromarray(thumbnail, mode="L")
+    else:
+        pil_thumbnail = Image.fromarray(thumbnail, mode="RGB")
+
+    return pil_thumbnail, thumbnail
 
 
 if __name__ == "__main__":
