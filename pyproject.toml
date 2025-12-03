@@ -1,5 +1,5 @@
 [project]
-name = "ambiom-bff-uploader-portal"
+name = "ambiom-bff-portals"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
