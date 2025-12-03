@@ -8,7 +8,7 @@ This project provides utilities to extract metadata from raw microscopy files an
 
 ## Main Components
 
-### `bff_uploader`
+### 📃 `bff_uploader`
 
 An interactive uploader that allows users to:
 - Upload files from a Windows path
@@ -25,7 +25,7 @@ uv run marimo edit src/bff_uploader.py
 uv run marimo run src/bff_uploader.py
 ```
 
-### `bff_processor`
+### ⚙ `bff_processor`
 
 Handles the conversion and storage of processed data. Can be launched as a standalone script:
 
