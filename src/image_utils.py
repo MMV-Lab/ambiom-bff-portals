@@ -6,19 +6,14 @@ from bioio import BioImage
 from .config import MAX_THUMBNAIL_SIZE
 
 
-def generate_quick_preview(input_image: BioImage) -> xr.DataArray:
-    preview = input_image.xarray_dask_data
-    preview = preview.squeeze(drop=True)
-
+def generate_quick_preview(preview: xr.DataArray) -> xr.DataArray:
     selection = {}
 
-    # Handle dimensions that should keep middle slice
     for dim in ["T", "M", "S", "Z"]:
         if dim in preview.dims:
             middle_idx = preview.sizes[dim] // 2
             selection[dim] = middle_idx
 
-    # Downsample X and Y to fit within MAX_THUMBNAIL_SIZE
     step = 1
     if "X" in preview.dims and "Y" in preview.dims:
         max_dim = max(preview.sizes["X"], preview.sizes["Y"])
@@ -28,23 +23,26 @@ def generate_quick_preview(input_image: BioImage) -> xr.DataArray:
             selection["X"] = slice(None, None, step)
             selection["Y"] = slice(None, None, step)
 
-    # Apply all selections at once
-    preview = preview.isel(selection) if selection else preview
+    preview = preview.isel(selection, drop=True) if selection else preview
 
-    # Contrast enhancement per channel
+    # --- CRITICAL OPTIMIZATION ---
+    # Fetch the down-sampled/cropped array into memory NOW.
+    # Otherwise, quantiles AND final calculations will trigger multiple reads.
+    preview = preview.compute()
+
     vmin, vmax = preview.quantile([0.01, 0.99], dim=["X", "Y"], skipna=True)
     preview = preview.clip(min=vmin, max=vmax)
 
-    # Prevent division by zero using xarray.where
     denominator = vmax - vmin
     preview = xr.where(
         denominator > 0,
         (preview - vmin) / denominator * 255.0,
-        128.0,  # default value when denominator is 0
-    )
-    preview = preview.fillna(0)
-
-    return preview
+        128.0, 
+    ).astype(np.uint8)
+    
+    preview = preview.drop_vars("quantile")
+    
+    return preview.squeeze(drop=True).fillna(0)
 
 
 def generate_rgb_thumbnail(thumbnail: xr.DataArray) -> tuple:

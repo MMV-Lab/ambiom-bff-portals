@@ -1,16 +1,21 @@
 import marimo
 
 __generated_with = "0.23.2"
-app = marimo.App(width="medium", app_title="ISAS BFF Uploader")
+app = marimo.App(width="full", app_title="ISAS BFF Uploader")
 
 with app.setup:
     from pathlib import Path
 
-    import pandas as pd
     import numpy as np
     import polars as pl
 
     import plotly.express as px
+
+    import holoviews as hv
+    import hvplot
+    import hvplot.xarray
+
+    hvplot.extension("bokeh")
 
     import marimo as mo
     import uuid
@@ -235,8 +240,8 @@ def _(adapter, folder_explorer, folder_submit):
     metadata_collection_done = False
 
     complete_list_metadata = []
-    bioimage_list = []
-    _adapter = adapter
+    preview_list = []
+    file_name_list = []
 
     with mo.status.progress_bar(
         total=len(folder_explorer.value),
@@ -247,13 +252,16 @@ def _(adapter, folder_explorer, folder_submit):
         for folder_explorer_element in folder_explorer.value:
             try:
                 selection = Path(folder_explorer_element.path)
-                input_file = _adapter.resolve_file(selection)
-                metadata = _adapter.extract(input_file)
+                input_file = adapter.resolve_file(selection)
+                metadata = adapter.extract(input_file)
 
-                input_image = _adapter.load(input_file)
-                thumbnail = generate_quick_preview(input_image)
+                input_image = adapter.load(input_file)
+                preview = generate_quick_preview(
+                    input_image.xarray_dask_data.squeeze(drop=True)
+                )
 
-                bioimage_list.append(thumbnail.to_numpy().astype(np.uint8))
+                file_name_list.append(input_file.name)
+                preview_list.append(preview)
                 complete_list_metadata.append(metadata)
 
                 bar.update(subtitle=f"{selection.stem}")
@@ -269,15 +277,24 @@ def _(adapter, folder_explorer, folder_submit):
                 )
                 continue
 
-    metadata_collection_done = True
+    _channel_counts = [m["Number of Channels"] for m in complete_list_metadata]
+    if len(set(_channel_counts)) > 1:
+        mo.output.append(
+            mo.md(
+                "❌ **Currently the input images need to have the same number of channels**"
+            ).callout("danger")
+        )
+    else:
+        metadata_collection_done = True
 
-    metadata_df = pd.DataFrame.from_dict(complete_list_metadata)
-    metadata_df["Server Path"] = metadata_df["File Path"]
-    metadata_df["User Source Path"] = metadata_df["File Path"].map(
-        convert_linux_to_windows_path
-    )
-    metadata_df = metadata_df.drop(columns=["File Path"])
-    return bioimage_list, metadata_collection_done, metadata_df
+    metadata_df = pl.DataFrame(complete_list_metadata)
+    metadata_df = metadata_df.with_columns(
+        pl.col("File Path").alias("Server Path"),
+        pl.col("File Path")
+        .map_elements(convert_linux_to_windows_path, return_dtype=pl.String)
+        .alias("User Source Path"),
+    ).drop("File Path")
+    return metadata_collection_done, metadata_df, preview
 
 
 @app.cell
@@ -287,23 +304,38 @@ def _(metadata_df):
 
 
 @app.cell
-def _(bioimage_list, metadata_collection_done):
+def _(metadata_collection_done, preview):
     mo.stop(metadata_collection_done == False)
 
-    _plotly_fig = px.imshow(
-        bioimage_list[0],
-        facet_col=0,
-        binary_string=True,
+    preview_fig = preview.hvplot.image(
+        x="X",
+        y="Y",
+        responsive=True,
+        min_height=100,
+        max_height=400,
         aspect="equal",
-        contrast_rescaling="minmax",
-        color_continuous_scale="magma",
-    )
+        colorbar=False,
+        use_dask=True,
+        flip_yaxis=True,
+        colormap="magma",
+    ).groupby("C", container_type=hv.NdLayout)
 
-    _plotly_fig.for_each_annotation(
-        lambda a: a.update(text="Channel " + a.text.split("=")[1])
-    )
+    # _plotly_fig = px.imshow(
+    #     bioimage_list[0],
+    #     facet_col=0,
+    #     binary_string=True,
+    #     aspect="equal",
+    #     contrast_rescaling="minmax",
+    #     color_continuous_scale="magma",
+    # )
 
-    _C = bioimage_list[0].shape[0]
+    # _plotly_fig.for_each_annotation(
+    #     lambda a: a.update(text="Channel " + a.text.split("=")[1])
+    # )
+
+    # _C = bioimage_list[0].shape[0]
+
+    _C = len(preview.C)
 
     dye_marker_dict = mo.ui.dictionary(
         {
@@ -385,7 +417,7 @@ def _(bioimage_list, metadata_collection_done):
     final = mo.vstack(
         [
             mo.md("""# 3) Fill In Manual Metadata  """),
-            mo.ui.plotly(_plotly_fig),
+            preview_fig,
             dye_marker_stack,
             mo.md("-------------"),
             mo.md("### Please insert the Experiment Metadata:"),
@@ -427,11 +459,13 @@ def _(
         )
     )
 
-    final_df = metadata_df.assign(**manual_metadata_dict.value)
-    final_df["Channel Names"] = channel_names_str
-    final_df["Microscope Type"] = input_form.value["microscope_type"]
-
-    final_df["uuid"] = [uuid.uuid4() for _ in range(len(final_df))]
+    final_df = metadata_df.with_columns(
+        [pl.lit(v).alias(k) for k, v in manual_metadata_dict.value.items()]
+    ).with_columns(
+        pl.lit(channel_names_str).alias("Channel Names"),
+        pl.lit(input_form.value["microscope_type"]).alias("Microscope Type"),
+        pl.Series("uuid", [str(uuid.uuid4()) for _ in range(len(metadata_df))]),
+    )
 
     final_submit = mo.ui.run_button(kind="warn", label="**Submit**")
 
@@ -457,7 +491,7 @@ def _(final_df, final_submit):
         + ".csv"
     )
 
-    final_df.to_csv(CSV_DIR / csv_name, index=False)
+    final_df.write_csv(CSV_DIR / csv_name)
 
     mo.md("""
             🎉 Congratulations! Your files have been correctly stored 🥰

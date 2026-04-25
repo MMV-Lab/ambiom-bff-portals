@@ -1,11 +1,13 @@
 """Simple HTTP file server with CORS enabled, serving OUTPUT_DIR."""
-
 import argparse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
-from src.config import OUTPUT_DIR
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.config import OUTPUT_DIR
 
 class CORSRequestHandler(SimpleHTTPRequestHandler):
     def end_headers(self):

@@ -20,13 +20,10 @@ import sys
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-
-# Add project root to path so src/ imports work
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import polars as pl
 from tqdm import tqdm
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.processing import process_images
 
 
@@ -35,7 +32,7 @@ def _worker(input_path: str, uuid: str) -> tuple[str, str, bool, Exception | Non
     # Each worker creates its own adapter to avoid cross-process sharing issues.
     from src.metadata_adapters.blaze import BlazeAdapter
     adapter = BlazeAdapter()
-    success, error = process_images(input_path, uuid, adapter)
+    success, error = process_images(input_path, uuid, adapter, overwrite=False)
     return input_path, uuid, success, error
 
 
@@ -86,7 +83,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--workers",
         type=int,
-        default=32,
+        default=16,
         help="Number of parallel worker processes (default: 4). "
              "Reduce if you run out of memory.",
     )
