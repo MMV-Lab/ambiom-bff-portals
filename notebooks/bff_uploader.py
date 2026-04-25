@@ -235,6 +235,104 @@ def _(adapter, converted_path):
 @app.cell
 def _(adapter, folder_explorer, folder_submit):
     mo.stop(folder_submit.value == False)
+
+    scene_picker = None
+    scene_confirm_button = None
+    scene_options_by_file: dict = {}
+    non_scene_selections = None
+    _cell_output = mo.md("")
+
+    if hasattr(adapter, "list_scenes"):
+        for _item in folder_explorer.value:
+            _file_path = Path(_item.path)
+            try:
+                _scenes = adapter.list_scenes(_file_path)
+                scene_options_by_file[str(_file_path)] = _scenes
+            except Exception as _e:
+                mo.output.append(
+                    mo.md(
+                        f"⚠️ Could not list scenes for `{_file_path.name}`: {_e}"
+                    ).callout("warn")
+                )
+
+        scene_picker = mo.ui.dictionary(
+            {
+                fp: mo.ui.multiselect(
+                    options=scenes,
+                    value=scenes,
+                    label=f"Scenes in **{Path(fp).name}**:",
+                )
+                for fp, scenes in scene_options_by_file.items()
+                if scenes
+            }
+        )
+        scene_confirm_button = mo.ui.run_button(
+            kind="warn", label="**Confirm Scene Selection**"
+        )
+        _cell_output = mo.vstack(
+            [
+                mo.md("# 2b) Select Scenes to Process"),
+                mo.md(
+                    "All scenes are pre-selected. Deselect any you want to skip, then confirm."
+                ),
+                *[
+                    scene_picker[fp]
+                    for fp in scene_options_by_file
+                    if scene_options_by_file[fp]
+                ],
+                scene_confirm_button,
+            ]
+        )
+    else:
+        non_scene_selections = [
+            (Path(item.path), None) for item in folder_explorer.value
+        ]
+
+    _cell_output
+    return (
+        non_scene_selections,
+        scene_confirm_button,
+        scene_options_by_file,
+        scene_picker,
+    )
+
+
+@app.cell
+def _(
+    non_scene_selections,
+    scene_confirm_button,
+    scene_options_by_file: dict,
+    scene_picker,
+):
+    if non_scene_selections is not None:
+        # Non-scene adapter: selections were already resolved in the previous cell.
+        scene_selections = non_scene_selections
+    else:
+        # Scene adapter: wait for the user to confirm the scene picker.
+        mo.stop(
+            scene_confirm_button is None or not scene_confirm_button.value,
+        )
+        scene_selections = []
+        for _fp_str, _selected_names in scene_picker.value.items():
+            _fp = Path(_fp_str)
+            _all_scenes = scene_options_by_file.get(_fp_str, [])
+            for _scene_name in _selected_names:
+                try:
+                    _scene_idx = _all_scenes.index(_scene_name)
+                except ValueError:
+                    continue
+                scene_selections.append((_fp, _scene_idx))
+    return (scene_selections,)
+
+
+@app.cell
+def _(adapter, scene_selections):
+    mo.stop(
+        not scene_selections,
+        mo.md("No scenes selected — go back and confirm your selection.").callout(
+            "warn"
+        ),
+    )
     metadata_collection_done = False
 
     complete_list_metadata = []
@@ -242,37 +340,41 @@ def _(adapter, folder_explorer, folder_submit):
     file_name_list = []
 
     with mo.status.progress_bar(
-        total=len(folder_explorer.value),
+        total=len(scene_selections),
         title="Gathering Metadata...",
         completion_title="🎉Done",
         completion_subtitle="All Set!",
     ) as bar:
-        for folder_explorer_element in folder_explorer.value:
+        for _file_path, _scene_index in scene_selections:
             try:
-                selection = Path(folder_explorer_element.path)
-                input_file = adapter.resolve_file(selection)
-                metadata = adapter.extract(input_file)
+                input_file = adapter.resolve_file(_file_path)
+                if _scene_index is not None:
+                    metadata = adapter.extract(input_file, _scene_index)
+                    input_image = adapter.load(input_file, _scene_index)
+                    _label = f"{input_file.name} > {metadata.get('Scene Name', str(_scene_index))}"
+                else:
+                    metadata = adapter.extract(input_file)
+                    input_image = adapter.load(input_file)
+                    _label = input_file.name
 
-                input_image = adapter.load(input_file)
-                preview = generate_quick_preview(
-                    input_image.xarray_dask_data.squeeze(drop=True)
-                )
+                _xr = input_image.xarray_dask_data.squeeze(drop=True)
+                if "C" in _xr.dims:
+                    _xr = _xr.assign_coords(C=list(range(_xr.sizes["C"])))
+                preview = generate_quick_preview(_xr)
 
-                file_name_list.append(input_file.name)
+                file_name_list.append(_label)
                 preview_list.append(preview)
                 complete_list_metadata.append(metadata)
 
-                bar.update(subtitle=f"{selection.stem}")
+                bar.update(subtitle=_label)
 
             except Exception as e:
                 mo.output.append(
                     mo.md(
-                        f"❌ **Error processing `{Path(folder_explorer_element.path).name}`**: {type(e).__name__}: {str(e)}"
+                        f"❌ **Error processing `{_file_path.name}`**: {type(e).__name__}: {str(e)}"
                     ).callout("danger")
                 )
-                bar.update(
-                    subtitle=f"Error: {Path(folder_explorer_element.path).name}"
-                )
+                bar.update(subtitle=f"Error: {_file_path.name}")
                 continue
 
     _channel_counts = [m["Number of Channels"] for m in complete_list_metadata]
@@ -292,7 +394,13 @@ def _(adapter, folder_explorer, folder_submit):
         .map_elements(convert_linux_to_windows_path, return_dtype=pl.String)
         .alias("User Source Path"),
     ).drop("File Path")
-    return file_name_list, metadata_collection_done, metadata_df, preview_list
+    return (
+        complete_list_metadata,
+        file_name_list,
+        metadata_collection_done,
+        metadata_df,
+        preview_list,
+    )
 
 
 @app.cell
@@ -321,11 +429,14 @@ def _(file_name_list, metadata_collection_done):
 
 
 @app.cell
-def _(file_name_list, file_selector, preview_list):
+def _(complete_list_metadata, file_name_list, file_selector, preview_list):
     mo.stop(file_selector.value is None)
 
     _idx = file_name_list.index(file_selector.value)
     _preview = preview_list[_idx]
+    _meta = complete_list_metadata[_idx]
+    _exc_list = _meta.get("Channel EXC [nm]", "").split(CHANNEL_LIST_SEP)
+    _em_list = _meta.get("Channel EM [nm]", "").split(CHANNEL_LIST_SEP)
 
     preview_fig = _preview.hvplot.image(
         x="X",
@@ -338,7 +449,8 @@ def _(file_name_list, file_selector, preview_list):
         use_dask=True,
         flip_yaxis=True,
         colormap="magma",
-    ).groupby("C", container_type=hv.NdLayout)
+        hover=False,
+    ).groupby("C", container_type=hv.NdLayout).opts(merge_tools=True, toolbar=None)
 
     _C = len(_preview.C)
 
@@ -348,9 +460,9 @@ def _(file_name_list, file_selector, preview_list):
                 [
                     mo.ui.dropdown(
                         options=DYE_DB["Dye"],
-                        value="Brilliant Violet 480",
+                        value=None,
                         searchable=True,
-                        allow_select_none=False,
+                        allow_select_none=True,
                         label="Dye:",
                     )
                     for _ in range(_C)
@@ -405,13 +517,18 @@ def _(file_name_list, file_selector, preview_list):
         f"### Fill in the required metadata for each of the {_C} Channels:\n\n"
         + "\n\n".join(
             [
-                f" **{i}.** {dye} {marker}"
-                for i, (dye, marker) in enumerate(
-                    zip(dye_marker_dict["dye"], dye_marker_dict["marker"])
+                f" **Channel {i}.** {marker} {dye}"
+                + (f" *(EXC: {exc} nm, EM: {em} nm)*" if exc or em else "")
+                for i, (dye, marker, exc, em) in enumerate(
+                    zip(
+                        dye_marker_dict["dye"],
+                        dye_marker_dict["marker"],
+                        _exc_list,
+                        _em_list,
+                    )
                 )
             ]
         )
-        + ""
     )
 
     final = mo.vstack(
@@ -452,7 +569,7 @@ def _(
     mo.stop(manual_metadata_submit.value == False)
 
     channel_names_str = CHANNEL_LIST_SEP.join(
-        f"{m} - {d}" if m else d
+        (f"{m} - {d}" if d else m) if m else (d or "")
         for m, d in zip(
             dye_marker_dict.value["marker"], dye_marker_dict.value["dye"]
         )

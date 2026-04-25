@@ -42,7 +42,7 @@ def _():
 
     """)
 
-    mo.vstack([title, body_text], align="center")
+    mo.output.append(mo.vstack([title, body_text], align="center"))
 
     print(f"-- Running as {mo.app_meta().mode}")
     return
@@ -121,30 +121,46 @@ def _(csv_paths):
     _list_cols = [c for c in CHANNEL_LIST_TO_FLAT if c in df.columns]
     if _list_cols:
         _max_ch = max(
-            df.select(pl.col(c).str.split(CHANNEL_LIST_SEP).list.len().max()).item()
+            df.select(
+                pl.col(c).str.split(CHANNEL_LIST_SEP).list.len().max()
+            ).item()
             for c in _list_cols
         )
-        df = df.with_columns([
-            pl.col(c).str.split(CHANNEL_LIST_SEP).list.get(i, null_on_oob=True)
-              .alias(CHANNEL_LIST_TO_FLAT[c].format(i=i))
-            for c in _list_cols
-            for i in range(_max_ch)
-        ]).drop(_list_cols)
+        df = df.with_columns(
+            [
+                pl.col(c)
+                .str.split(CHANNEL_LIST_SEP)
+                .list.get(i, null_on_oob=True)
+                .alias(CHANNEL_LIST_TO_FLAT[c].format(i=i))
+                for c in _list_cols
+                for i in range(_max_ch)
+            ]
+        ).drop(_list_cols)
 
-    df = df.rename({
-        "File Name": "old_File Name",
-        "User Source Path": "old_User Source Path",
-        "Server Path": "old_Server Path",
-    })
+    df = df.rename(
+        {
+            "File Name": "old_File Name",
+            "User Source Path": "old_User Source Path",
+            "Server Path": "old_Server Path",
+        }
+    )
 
     # Build BFF-required URL columns from config.
     # To switch from localhost → public: update BASE_URL in config.py and re-run bff_reexport.
     df = df.with_columns(
         [
             pl.col("uuid").alias("File Name"),
-            (pl.lit(f"{BASE_URL}/{ZARR_DIR.name}/") + pl.col("uuid") + pl.lit(".ome.zarr")).alias("File Path"),
+            (
+                pl.lit(f"{BASE_URL}/{ZARR_DIR.name}/")
+                + pl.col("uuid")
+                + pl.lit(".ome.zarr")
+            ).alias("File Path"),
             (pl.col("uuid") + pl.lit(".ome.zarr")).alias("File Path Relative"),
-            (pl.lit(f"{BASE_URL}/{THUMBNAIL_DIR.name}/") + pl.col("uuid") + pl.lit(".jpg")).alias("Thumbnail"),
+            (
+                pl.lit(f"{BASE_URL}/{THUMBNAIL_DIR.name}/")
+                + pl.col("uuid")
+                + pl.lit(".jpg")
+            ).alias("Thumbnail"),
             (pl.col("uuid") + pl.lit(".jpg")).alias("Thumbnail Relative"),
         ]
     )
@@ -167,7 +183,13 @@ def _(csv_paths):
     df = df.select(
         ["File Name", "File Path", "File Path Relative"]
         + other_cols
-        + ["Thumbnail", "Thumbnail Relative", "old_File Name", "old_User Source Path", "old_Server Path"]
+        + [
+            "Thumbnail",
+            "Thumbnail Relative",
+            "old_File Name",
+            "old_User Source Path",
+            "old_Server Path",
+        ]
     )
     return (df,)
 
@@ -202,16 +224,18 @@ def _():
 def _(df, start_processing_button):
     # PROCESS EVERYTHING
     if mo.app_meta().mode in ("script",):
-
-        with tqdm(total=len(_df), desc="Processing") as pbar:
-            for row in _df.iter_rows(named=True):
-                input_path = row["Internal File Path"]
+        with tqdm(total=len(df), desc="Processing") as pbar:
+            for row in df.iter_rows(named=True):
+                input_path = row["old_Server Path"]
                 uuid = row["uuid"]
                 adapter = ADAPTER_REGISTRY[row["Microscope Type"]]()
+                scene_index = row.get("Scene Index")
 
                 pbar.set_description(f"Processing: {uuid}")
 
-                success, error = process_images(input_path, uuid, adapter)
+                success, error = process_images(
+                    input_path, uuid, adapter, scene_index=scene_index
+                )
 
                 if not success:
                     print(f"Failed to process {input_path}:")
@@ -233,13 +257,16 @@ def _(df, start_processing_button):
             total=len(_df), show_eta=False, show_rate=False
         ) as progres_bar:
             for row in _df.iter_rows(named=True):
-                input_path = row["Internal File Path"]
+                input_path = row["old_Server Path"]
                 uuid = row["uuid"]
                 adapter = ADAPTER_REGISTRY[row["Microscope Type"]]()
+                scene_index = row.get("Scene Index")
 
                 progres_bar.update(0, subtitle=f"Processing: {uuid}")
 
-                success, error = process_images(input_path, uuid, adapter)
+                success, error = process_images(
+                    input_path, uuid, adapter, scene_index=scene_index
+                )
 
                 if not success:
                     mo.output.append(f"Failed to process {input_path}:")

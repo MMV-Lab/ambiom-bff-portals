@@ -25,6 +25,7 @@ CHANNEL_LIST_TO_FLAT: dict[str, str] = {
     "Channel EXC [nm]":          "Channel {i} EXC [nm]",
     "Channel EM [nm]":           "Channel {i} EM [nm]",
     "Channel Exposure Time [ms]": "Channel {i} Exposure Time [ms]",
+    "Channel Pixel Dwell Time [µs]": "Channel {i} Pixel Dwell Time [µs]",
     "Channel Names":             "Channel {i}",
 }
 

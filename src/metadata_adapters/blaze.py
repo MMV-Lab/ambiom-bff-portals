@@ -142,9 +142,9 @@ class BlazeAdapter:
             "File Name": path.name,
             "File Path": str(path.resolve()),
             "Image Size (X,Y,Z) [pixels]": f"{image.dims.X},{image.dims.Y},{image.dims.Z}",
-            "Pixel Size X": image.physical_pixel_sizes.X,
-            "Pixel Size Y": image.physical_pixel_sizes.Y,
-            "Pixel Size Z": image.physical_pixel_sizes.Z,
+            "Pixel Size X [um]": image.physical_pixel_sizes.X,
+            "Pixel Size Y [um]": image.physical_pixel_sizes.Y,
+            "Pixel Size Z [um]": image.physical_pixel_sizes.Z,
             "Number of Channels": len(image.channel_names),
             **metadata_dict,
         }

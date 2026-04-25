@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from src.metadata_adapters.blaze import BlazeAdapter
+from src.metadata_adapters.leica_sp8 import LeicaSP8Adapter
 
 
 class MetadataAdapter(Protocol):
@@ -56,9 +57,18 @@ class MetadataAdapter(Protocol):
     # acquisitions like Blaze where annotation refs must be preserved).
     # If absent, ``process_images`` falls back to ``img.ome_metadata``.
 
+    # Optional multi-scene interface (e.g. Leica .lif files):
+    # ``list_scenes(path) -> list[str]``
+    #     Returns all scene names embedded in the file.
+    # ``load(path, scene_index=0)`` / ``extract(path, scene_index=0)``
+    #     Accept an optional zero-based scene index.  When present, the
+    #     uploader shows a scene-picker UI after file selection and the
+    #     processor passes the stored ``Scene Index`` column value.
+
 
 # Maps the UI label shown in the dropdown to the corresponding adapter class.
 # Add new adapters here as they are implemented.
 ADAPTER_REGISTRY: dict = {
     "Miltenyi UltraMicroscope Blaze (LSFM) [1st floor]": BlazeAdapter,
+    "LEICA SP8 (confocal) [2nd floor]": LeicaSP8Adapter,
 }

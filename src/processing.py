@@ -9,7 +9,13 @@ from .config import XML_DIR, THUMBNAIL_DIR, TIFF_DIR, ZARR_DIR
 from .image_utils import generate_quick_preview, generate_rgb_thumbnail
 
 
-def process_images(input_path_str: str, uuid: str, adapter, overwrite: bool = False) -> tuple[bool, Exception | None]:
+def process_images(
+    input_path_str: str,
+    uuid: str,
+    adapter,
+    overwrite: bool = False,
+    scene_index: int | None = None,
+) -> tuple[bool, Exception | None]:
     try:
         input_path = Path(input_path_str).resolve()
         if not input_path.exists() or not input_path.is_file():
@@ -29,7 +35,11 @@ def process_images(input_path_str: str, uuid: str, adapter, overwrite: bool = Fa
         if not (need_xml or need_thumbnail or need_tiff or need_zarr):
             return True, None
 
-        img = adapter.load(input_path)
+        img = (
+            adapter.load(input_path, scene_index=scene_index)
+            if scene_index is not None
+            else adapter.load(input_path)
+        )
 
         # # In-memory evaluation to avoid dual disk reads
         # if need_tiff or need_zarr:
