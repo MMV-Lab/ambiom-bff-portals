@@ -9,8 +9,6 @@ with app.setup:
     import numpy as np
     import polars as pl
 
-    import plotly.express as px
-
     import holoviews as hv
     import hvplot
     import hvplot.xarray
@@ -120,34 +118,34 @@ def _():
 
 @app.cell
 def _():
-    class ClientDetector(anywidget.AnyWidget):
-        # Properly formatted ESM module for AnyWidget
-        _esm = """
-        export default {
-            render({ model }) {
-                model.set('ua', navigator.userAgent);
-                model.save_changes();
-            }
-        }
-        """
-        ua = traitlets.Unicode("").tag(sync=True)
+    # class ClientDetector(anywidget.AnyWidget):
+    #     # Properly formatted ESM module for AnyWidget
+    #     _esm = """
+    #     export default {
+    #         render({ model }) {
+    #             model.set('ua', navigator.userAgent);
+    #             model.save_changes();
+    #         }
+    #     }
+    #     """
+    #     ua = traitlets.Unicode("").tag(sync=True)
 
 
-    detector = ClientDetector()
-    detector
-    return (detector,)
+    # detector = ClientDetector()
+    # detector
+    return
 
 
 @app.cell
-def _(detector):
-    if detector:
-        time.sleep(2)
-        user = parse(detector.ua)
-        mo.output.append(
-            mo.md(
-                f"You are using **{user.browser.family}** on **{user.os.family}**."
-            )
-        )
+def _():
+    # if detector:
+    #     time.sleep(2)
+    #     user = parse(detector.ua)
+    #     mo.output.append(
+    #         mo.md(
+    #             f"You are using **{user.browser.family}** on **{user.os.family}**."
+    #         )
+    #     )
     return
 
 
@@ -294,7 +292,7 @@ def _(adapter, folder_explorer, folder_submit):
         .map_elements(convert_linux_to_windows_path, return_dtype=pl.String)
         .alias("User Source Path"),
     ).drop("File Path")
-    return metadata_collection_done, metadata_df, preview
+    return file_name_list, metadata_collection_done, metadata_df, preview_list
 
 
 @app.cell
@@ -304,10 +302,32 @@ def _(metadata_df):
 
 
 @app.cell
-def _(metadata_collection_done, preview):
+def _(file_name_list, metadata_collection_done):
     mo.stop(metadata_collection_done == False)
 
-    preview_fig = preview.hvplot.image(
+    file_selector = mo.ui.dropdown(
+        options=file_name_list,
+        value=file_name_list[0] if file_name_list else None,
+        label="Select file to preview:",
+    )
+
+    mo.vstack(
+        [
+            mo.md("""# 3) Fill In Manual Metadata  """),
+            file_selector,
+        ]
+    )
+    return (file_selector,)
+
+
+@app.cell
+def _(file_name_list, file_selector, preview_list):
+    mo.stop(file_selector.value is None)
+
+    _idx = file_name_list.index(file_selector.value)
+    _preview = preview_list[_idx]
+
+    preview_fig = _preview.hvplot.image(
         x="X",
         y="Y",
         responsive=True,
@@ -320,22 +340,7 @@ def _(metadata_collection_done, preview):
         colormap="magma",
     ).groupby("C", container_type=hv.NdLayout)
 
-    # _plotly_fig = px.imshow(
-    #     bioimage_list[0],
-    #     facet_col=0,
-    #     binary_string=True,
-    #     aspect="equal",
-    #     contrast_rescaling="minmax",
-    #     color_continuous_scale="magma",
-    # )
-
-    # _plotly_fig.for_each_annotation(
-    #     lambda a: a.update(text="Channel " + a.text.split("=")[1])
-    # )
-
-    # _C = bioimage_list[0].shape[0]
-
-    _C = len(preview.C)
+    _C = len(_preview.C)
 
     dye_marker_dict = mo.ui.dictionary(
         {
@@ -364,11 +369,6 @@ def _(metadata_collection_done, preview):
                 ]
             ),
         }
-    )
-
-
-    channels = mo.ui.array(
-        [mo.ui.text(label="Channel " + str(i)) for i in range(_C)]
     )
 
     manual_metadata_dict = mo.ui.dictionary(
@@ -416,7 +416,6 @@ def _(metadata_collection_done, preview):
 
     final = mo.vstack(
         [
-            mo.md("""# 3) Fill In Manual Metadata  """),
             preview_fig,
             dye_marker_stack,
             mo.md("-------------"),
