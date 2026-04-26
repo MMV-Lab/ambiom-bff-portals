@@ -57,10 +57,38 @@ uv run scripts/simple_serve.py
 
 ## Getting Started
 
-1. Ensure you have [uv](https://github.com/astral-sh/uv) installed
-2. Clone this repository
-3. Configure path mappings and output URL (see **Customization** below)
-4. Run the desired component using the commands above
+### Installation
+
+Choose one of the following setup methods:
+
+#### With `uv` (recommended)
+```bash
+git clone https://github.com/MMV-Lab/ambiom-bff-portals
+uv sync
+```
+
+#### With `venv`
+```bash
+git clone https://github.com/MMV-Lab/ambiom-bff-portals
+python -m venv .venv
+# activate env (os dependent)
+source .venv/bin/activate  # on Linux/macOS
+# .venv\Scripts\activate  # on Windows
+pip install -r requirements.txt
+```
+
+#### With `conda`
+```bash
+git clone https://github.com/MMV-Lab/ambiom-bff-portals
+conda create -n ambiom-bff python=3.12
+conda activate ambiom-bff
+pip install -r requirements.txt
+```
+
+### Running the application
+
+1. Configure path mappings and output URL (see **Customization** below)
+2. Run the desired component using the commands in **Main Components** above
 
 ## Project Structure
 
