@@ -7,11 +7,19 @@ from bioio import BioImage
 import bioio_bioformats
 from bioio_ome_tiff.writers import OmeTiffWriter
 
-from src.metadata_config import (
-    BLAZE_XML_KEYS,
-    BLAZE_CHANNEL_XML_KEY_PREFIX,
-    CHANNEL_LIST_SEP,
-)
+from src.metadata_config import CHANNEL_LIST_SEP
+
+# Maps canonical field name → XML search key used by find_metadata_in_xml
+# to locate the value in the OME structured annotations.
+BLAZE_XML_KEYS: dict[str, str] = {
+    "Obj. Magnification": "Blaze ObjectiveMagnification",
+    "Obj. NA": "ObjectiveNA",
+    "Digital Zoom": "Blaze CurrentZoom",
+    "Measurement TimeStamp": "MeasTime",
+}
+
+# Prefix used to build per-channel XML search keys (e.g. "Filter0", "Filter1", …).
+BLAZE_CHANNEL_XML_KEY_PREFIX = "Filter"
 
 
 def _clean_up_qname(input_str: str) -> str:

@@ -11,7 +11,7 @@ with app.setup:
 
 @app.cell
 def _():
-    input_path = Path("public")
+    input_path = Path("../resources")
 
     input_files = input_path.glob("Dye*.xlsx")
 

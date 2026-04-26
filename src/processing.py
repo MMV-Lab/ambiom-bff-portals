@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 
 from bioio_ome_tiff.writers import OmeTiffWriter
-from bioio_ome_zarr.writers import OMEZarrWriter, get_default_config_for_viz, Channel
+from bioio_ome_zarr.writers import OMEZarrWriter, get_default_config_for_viz
 
 from .config import XML_DIR, THUMBNAIL_DIR, TIFF_DIR, ZARR_DIR
 from .image_utils import generate_quick_preview, generate_rgb_thumbnail

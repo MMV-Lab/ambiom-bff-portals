@@ -28,8 +28,6 @@ with app.setup:
 
     from src.config import (
         PATH_MAPPING,
-        OUTPUT_DIR,
-        MAX_THUMBNAIL_SIZE,
         CSV_DIR,
         TIME_STAMP_FORMAT,
     )
@@ -41,15 +39,15 @@ with app.setup:
     from src.metadata_adapters import ADAPTER_REGISTRY
     from src.metadata_config import CHANNEL_LIST_SEP, EXPERIMENT_METADATA_OPTIONS
 
-    DYE_DB = pl.read_parquet("public/dyes.parquet")
-    MARKER_DB = pl.read_parquet("public/markers.parquet")
+    DYE_DB = pl.read_parquet("resources/dyes.parquet")
+    MARKER_DB = pl.read_parquet("resources/markers.parquet")
 
 
 @app.cell
 def _():
     title = mo.hstack(
         [
-            mo.image(src="public/ISAS_Logo.svg", width=70),
+            mo.image(src="resources/ISAS_Logo.svg", width=70),
             mo.md("# ISAS BFF Uploader ").center(),
         ],
         justify="start",
@@ -94,7 +92,7 @@ def _():
                 type: info
 
 
-            ![Tutorial Windows Path](public/tutorial_gif.gif)
+            ![Tutorial Windows Path](resources/tutorial_gif.gif)
             ///
 
 

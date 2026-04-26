@@ -1,8 +1,11 @@
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bioio import BioImage
 import bioio_lif
+from bioio_ome_tiff.writers import OmeTiffWriter
+from ome_types.model import AnnotationRef, StructuredAnnotations, XMLAnnotation
 
 from src.metadata_config import CHANNEL_LIST_SEP
 
@@ -162,6 +165,58 @@ class LeicaSP8Adapter:
 
     selection_mode = "file"
     accepted_suffixes: list[str] = [".lif"]
+
+    def build_ome(self, img: BioImage, img_xr):
+        """Build an OME metadata object for a Leica SP8 scene.
+
+        Constructs standard OME boilerplate from the image dimensions and
+        pixel sizes, then embeds the raw LIF XML (``img.metadata``) as an
+        ``XMLAnnotation`` inside ``StructuredAnnotations``, linked back to
+        the image via an ``AnnotationRef``.
+        """
+        img_xr_dims = "".join(img_xr.dims)
+
+        out_ome = OmeTiffWriter.build_ome(
+            data_shapes=[img_xr.shape],
+            data_types=[img_xr.dtype],
+            dimension_order=[img_xr_dims],
+            physical_pixel_sizes=[img.physical_pixel_sizes],
+        )
+
+        # Copy acquisition date when available
+        try:
+            out_ome.images[0].acquisition_date = (
+                img.ome_metadata.images[0].acquisition_date
+            )
+        except Exception:
+            pass
+
+        # Embed only the current scene's XML subtree as an XMLAnnotation
+        try:
+            scene_name = img.current_scene
+            scene_elem = None
+            for elem in img.metadata.iter():
+                if _local_tag(elem) == "Element" and elem.get("Name") == scene_name:
+                    scene_elem = elem
+                    break
+            xml_source = scene_elem if scene_elem is not None else img.metadata
+            lif_xml_str = ET.tostring(xml_source, encoding="unicode")
+            annotation_id = "Annotation:LeicaLIF:0"
+            oem_annotation = XMLAnnotation(
+                id=annotation_id,
+                namespace="com.leica.las-x.lif-metadata/v1",
+                value=lif_xml_str,  # type: ignore[arg-type]  # validator accepts str
+            )
+            if out_ome.structured_annotations is None:
+                out_ome.structured_annotations = StructuredAnnotations()
+            out_ome.structured_annotations.xml_annotations.append(oem_annotation)
+            out_ome.images[0].annotation_refs.append(
+                AnnotationRef(id=annotation_id)
+            )
+        except Exception:
+            pass
+
+        return out_ome
 
     def resolve_file(self, selection: Path) -> Path:
         """Return *selection* unchanged — it is already the target .lif file."""

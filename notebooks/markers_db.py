@@ -9,7 +9,7 @@ def _():
     import polars as pl
     from pathlib import Path
 
-    input_path = Path("public")
+    input_path = Path("../resources")
 
     input_files = input_path.glob("Cell_*.xlsx")
 

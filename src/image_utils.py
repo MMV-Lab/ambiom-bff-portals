@@ -1,7 +1,6 @@
 import numpy as np
 import xarray as xr
 from PIL import Image
-from bioio import BioImage
 
 from .config import MAX_THUMBNAIL_SIZE
 

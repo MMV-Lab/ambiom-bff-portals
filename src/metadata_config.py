@@ -115,14 +115,5 @@ EXPERIMENT_METADATA_OPTIONS: dict[str, list[str]] = {
     ],
 }
 
-# Blaze microscope: maps canonical field name → XML search key used by
-# find_metadata_in_xml to locate the value in the OME structured annotations.
-BLAZE_XML_KEYS: dict[str, str] = {
-    "Obj. Magnification": "Blaze ObjectiveMagnification",
-    "Obj. NA": "ObjectiveNA",
-    "Digital Zoom": "Blaze CurrentZoom",
-    "Measurement TimeStamp": "MeasTime",
-}
 
-BLAZE_CHANNEL_XML_KEY_PREFIX = "Filter"
 

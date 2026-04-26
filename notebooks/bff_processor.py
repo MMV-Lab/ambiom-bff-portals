@@ -31,7 +31,7 @@ with app.setup:
 def _():
     title = mo.hstack(
         [
-            mo.image(src="public/ISAS_Logo.svg", width=70),
+            mo.image(src="resources/ISAS_Logo.svg", width=70),
             mo.md("# ISAS BFF Processor").center(),
         ],
         justify="start",

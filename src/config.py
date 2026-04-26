@@ -3,9 +3,6 @@ from pathlib import Path, PureWindowsPath
 # Resolve project root relative to this file so paths are CWD-independent
 _PROJECT_ROOT = Path(__file__).parent.parent
 
-# TMP_PATH = _PROJECT_ROOT / "tmp"
-# TMP_PATH.mkdir(parents=True, exist_ok=True)
-
 PATH_MAPPING = {
     PureWindowsPath(r"\\ambiom-fs1.isas.de\ambiom_storage"): Path("/mnt/eternus/"),
     # PureWindowsPath(r"\\do1-fs-iota.isas.de\bio-img-raw"): # N.A.,
@@ -39,4 +36,6 @@ TIME_STAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # Re-run bff_reexport.py afterwards to rebuild File Path / Thumbnail columns.
 BASE_URL = "http://localhost:8000"
 
+# TMP_PATH = _PROJECT_ROOT / "tmp"
+# TMP_PATH.mkdir(parents=True, exist_ok=True)
 
