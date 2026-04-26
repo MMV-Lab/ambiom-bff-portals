@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 # Configuration
-url = "https://ambiomcloud.isas.de/index.php/s/PDfGrE8YNe9NkYY/download"
+url = "https://ambiomcloud.isas.de/index.php/s/FWa2CPexm83Mptk/download"
 zip_path = Path("sample_data.zip")
 extract_dir = Path("data")
 
