@@ -4,7 +4,11 @@ __generated_with = "0.23.2"
 app = marimo.App(width="medium", app_title="ISAS BFF Processor")
 
 with app.setup:
+
     from pathlib import Path
+
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
 
     import polars as pl
     import marimo as mo

@@ -436,19 +436,23 @@ def _(complete_list_metadata, file_name_list, file_selector, preview_list):
     _exc_list = _meta.get("Channel EXC [nm]", "").split(CHANNEL_LIST_SEP)
     _em_list = _meta.get("Channel EM [nm]", "").split(CHANNEL_LIST_SEP)
 
-    preview_fig = _preview.hvplot.image(
-        x="X",
-        y="Y",
-        responsive=True,
-        min_height=100,
-        max_height=400,
-        aspect="equal",
-        colorbar=False,
-        use_dask=True,
-        flip_yaxis=True,
-        colormap="magma",
-        hover=False,
-    ).groupby("C", container_type=hv.NdLayout).opts(merge_tools=True, toolbar=None)
+    preview_fig = (
+        _preview.hvplot.image(
+            x="X",
+            y="Y",
+            responsive=True,
+            min_height=100,
+            max_height=400,
+            aspect="equal",
+            colorbar=False,
+            use_dask=True,
+            flip_yaxis=True,
+            colormap="magma",
+            hover=False,
+        )
+        .groupby("C", container_type=hv.NdLayout)
+        .opts(merge_tools=True, toolbar=None)
+    )
 
     _C = len(_preview.C)
 
@@ -488,7 +492,7 @@ def _(complete_list_metadata, file_name_list, file_selector, preview_list):
             ),
             "Cell Line": mo.ui.dropdown(
                 options=EXPERIMENT_METADATA_OPTIONS["Cell Line"],
-                label="Cell Line:",
+                label="Cell Line / Sample Type:",
             ),
             "Location": mo.ui.dropdown(
                 options=EXPERIMENT_METADATA_OPTIONS["Location"],
